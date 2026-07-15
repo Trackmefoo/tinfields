@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import type { YieldKpiResponse } from "@/types";
+import type { StoredAuditEvent, YieldKpiResponse } from "@/types";
 
 function formatDateTime(iso: string) {
   const date = new Date(iso);
@@ -51,10 +51,28 @@ type ZoneTrendRow = {
   previousBatchCount: number;
 };
 
+type OpsEvidenceRow = {
+  id: string;
+  action: string;
+  createdAt: string;
+  title: string;
+  detail: string;
+  href: string;
+};
+
+function getDetailsString(details: Record<string, unknown> | undefined, key: string) {
+  const value = details?.[key];
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  return value;
+}
+
 export default function YieldDashboardPage() {
   const [windowDays, setWindowDays] = useState(120);
   const [currentData, setCurrentData] = useState<YieldKpiResponse | null>(null);
   const [previousData, setPreviousData] = useState<YieldKpiResponse | null>(null);
+  const [auditEvents, setAuditEvents] = useState<StoredAuditEvent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,7 +82,7 @@ export default function YieldDashboardPage() {
       setError(null);
 
       try {
-        const [currentResponse, previousResponse] = await Promise.all([
+        const [currentResponse, previousResponse, auditResponse] = await Promise.all([
           fetch(`/api/protected/yield-kpi?windowDays=${windowDays}`, {
             cache: "no-store",
           }),
@@ -74,6 +92,9 @@ export default function YieldDashboardPage() {
               cache: "no-store",
             },
           ),
+          fetch(`/api/protected/audit?limit=180`, {
+            cache: "no-store",
+          }),
         ]);
 
         if (!currentResponse.ok || !previousResponse.ok) {
@@ -91,10 +112,20 @@ export default function YieldDashboardPage() {
           previousResponse.json(),
         ])) as [YieldKpiResponse, YieldKpiResponse];
 
+        let fetchedAuditEvents: StoredAuditEvent[] = [];
+        if (auditResponse.ok) {
+          const auditPayload = (await auditResponse.json()) as { items?: unknown };
+          if (Array.isArray(auditPayload.items)) {
+            fetchedAuditEvents = auditPayload.items as StoredAuditEvent[];
+          }
+        }
+
         setCurrentData(currentPayload);
         setPreviousData(previousPayload);
+        setAuditEvents(fetchedAuditEvents);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Unable to load yield KPIs.");
+        setAuditEvents([]);
       } finally {
         setIsLoading(false);
       }
@@ -444,6 +475,127 @@ export default function YieldDashboardPage() {
     return rows;
   }, [currentData, previousData]);
 
+  const opsEvidenceRows = useMemo(() => {
+    if (!auditEvents.length) {
+      return [];
+    }
+
+    const regressingProfileKeys = new Set(
+      topRegressions.map((row) => row.profileKey),
+    );
+    const regressingZones = new Set(
+      zoneTrendRows
+        .filter((row) => row.usableDelta < 0 || row.rejectRateDelta > 0)
+        .map((row) => row.zoneId),
+    );
+
+    const globallyRelevantActions = new Set([
+      "integration-readiness-test",
+      "update-crop-catalog-item",
+      "update-batch-zone-assignment",
+    ]);
+
+    const relevantActions = new Set([
+      "integration-readiness-test",
+      "update-crop-catalog-item",
+      "update-batch-zone-assignment",
+      "assign-batch-zone",
+      "log-harvest",
+      "create-planting-batch",
+    ]);
+
+    return auditEvents
+      .filter((event) => relevantActions.has(event.action))
+      .map<OpsEvidenceRow | null>((event) => {
+        const details = event.details;
+        const zoneId = getDetailsString(details, "zoneId");
+        const cropName = getDetailsString(details, "cropName");
+        const cultivar = getDetailsString(details, "cultivar") ?? "";
+        const profileKey =
+          zoneId && cropName ? `${cropName}::${cultivar}::${zoneId}` : undefined;
+
+        const matchesRegressingZone = !!zoneId && regressingZones.has(zoneId);
+        const matchesRegressingProfile =
+          !!profileKey && regressingProfileKeys.has(profileKey);
+        const globallyRelevant = globallyRelevantActions.has(event.action);
+
+        if (!matchesRegressingZone && !matchesRegressingProfile && !globallyRelevant) {
+          return null;
+        }
+
+        switch (event.action) {
+          case "log-harvest": {
+            const finalized =
+              typeof details?.finalized === "boolean" ? details.finalized : false;
+            return {
+              id: event.id,
+              action: event.action,
+              createdAt: event.createdAt,
+              title: finalized
+                ? "Harvest finalized in monitored area"
+                : "Harvest logged in monitored area",
+              detail: `Zone ${zoneId ?? "unknown"}`,
+              href: "/dashboard",
+            };
+          }
+          case "assign-batch-zone":
+          case "update-batch-zone-assignment":
+            return {
+              id: event.id,
+              action: event.action,
+              createdAt: event.createdAt,
+              title: "Zone assignment lifecycle changed",
+              detail: `Zone ${zoneId ?? "unknown"}`,
+              href: "/dashboard/catalog",
+            };
+          case "create-planting-batch":
+            return {
+              id: event.id,
+              action: event.action,
+              createdAt: event.createdAt,
+              title: "New planting batch entered",
+              detail: `${cropName ?? "Crop"}${zoneId ? ` in ${zoneId}` : ""}`,
+              href: "/dashboard",
+            };
+          case "update-crop-catalog-item":
+            return {
+              id: event.id,
+              action: event.action,
+              createdAt: event.createdAt,
+              title: "Crop catalog recipe changed",
+              detail: "Catalog item fields were updated",
+              href: "/dashboard/catalog",
+            };
+          case "integration-readiness-test": {
+            const provider = getDetailsString(details, "provider") ?? "unknown provider";
+            const delivered =
+              typeof details?.delivered === "boolean" ? details.delivered : false;
+            return {
+              id: event.id,
+              action: event.action,
+              createdAt: event.createdAt,
+              title: delivered
+                ? "Messaging readiness test succeeded"
+                : "Messaging readiness test failed",
+              detail: `Provider: ${provider}`,
+              href: "/dashboard/integrations",
+            };
+          }
+          default:
+            return {
+              id: event.id,
+              action: event.action,
+              createdAt: event.createdAt,
+              title: "Operational change detected",
+              detail: event.targetType,
+              href: "/dashboard",
+            };
+        }
+      })
+      .filter((item): item is OpsEvidenceRow => item !== null)
+      .slice(0, 12);
+  }, [auditEvents, topRegressions, zoneTrendRows]);
+
   return (
     <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_15%_12%,#e8f9da_0%,#f5fde7_28%,#eef7ff_60%,#f8f1e6_100%)] text-slate-900">
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(16,185,129,.08),rgba(14,116,144,.08),rgba(245,158,11,.08))]" />
@@ -728,6 +880,44 @@ export default function YieldDashboardPage() {
                 )}
               </tbody>
             </table>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-white/60 bg-white/75 p-6 shadow-[0_18px_40px_-26px_rgba(15,23,42,.5)] backdrop-blur-sm">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">Ops Evidence Timeline</h2>
+            <p className="text-xs uppercase tracking-wide text-slate-500">
+              {isLoading ? "Refreshing..." : `${opsEvidenceRows.length} events`}
+            </p>
+          </div>
+
+          <div className="mt-4 grid gap-3">
+            {opsEvidenceRows.length ? (
+              opsEvidenceRows.map((row) => (
+                <article
+                  className="rounded-2xl border border-white/70 bg-white/80 p-4 shadow-[0_10px_20px_-18px_rgba(15,23,42,.45)]"
+                  key={row.id}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-sm font-semibold text-slate-800">{row.title}</h3>
+                    <p className="text-xs text-slate-500">{formatDateTime(row.createdAt)}</p>
+                  </div>
+                  <p className="mt-1 text-sm text-slate-600">{row.detail}</p>
+                  <div className="mt-3">
+                    <Link
+                      className="text-xs font-semibold uppercase tracking-wide text-emerald-700 hover:text-emerald-800"
+                      href={row.href}
+                    >
+                      Open related workspace
+                    </Link>
+                  </div>
+                </article>
+              ))
+            ) : (
+              <p className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
+                No matching evidence events found for current regressions.
+              </p>
+            )}
           </div>
         </section>
 
