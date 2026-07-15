@@ -1,5 +1,7 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { extractRoleFromClaims, hasRequiredRole, type ApprovedRole } from "@/lib/authz";
+import { appendAuditEvent, listAuditEvents } from "@/lib/audit-store";
+import { extractRoleFromClaims, hasRequiredRole, requireApprovedRole, type ApprovedRole } from "@/lib/authz";
+import type { StoredAuditEvent } from "@/types";
 
 type UserApprovalItem = {
   id: string;
@@ -13,6 +15,15 @@ type UserApprovalItem = {
 type PatchPayload = {
   userId: string;
   role: ApprovedRole;
+};
+
+type ApprovalAuditItem = {
+  id: string;
+  createdAt: string;
+  actorUserId: string;
+  actorRole: ApprovedRole;
+  approvedUserId?: string;
+  approvedRole?: ApprovedRole;
 };
 
 type ClerkEmailAddress = {
@@ -33,9 +44,17 @@ type ClerkUserLike = {
 };
 
 const APPROVED_ROLES: ApprovedRole[] = ["operator", "grow_manager", "admin"];
+const APPROVAL_AUDIT_ACTION = "user-access-approved";
+const APPROVAL_AUDIT_TARGET = "user";
+const APPROVAL_AUDIT_SCAN_LIMIT = 250;
+const APPROVAL_AUDIT_RETURN_LIMIT = 20;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function isApprovedRole(value: unknown): value is ApprovedRole {
+  return value === "operator" || value === "grow_manager" || value === "admin";
 }
 
 function getRoleFromPublicMetadata(value: unknown): ApprovedRole | "pending" {
@@ -68,6 +87,31 @@ function parsePayload(value: unknown): PatchPayload | null {
   }
 
   return { userId, role };
+}
+
+function toApprovalAuditItem(event: StoredAuditEvent): ApprovalAuditItem | null {
+  if (event.action !== APPROVAL_AUDIT_ACTION || event.targetType !== APPROVAL_AUDIT_TARGET) {
+    return null;
+  }
+
+  const approvedRole =
+    event.details && isRecord(event.details) && isApprovedRole(event.details.approvedRole)
+      ? event.details.approvedRole
+      : undefined;
+
+  const approvedUserId =
+    event.details && isRecord(event.details) && typeof event.details.approvedUserId === "string"
+      ? event.details.approvedUserId
+      : event.targetId;
+
+  return {
+    id: event.id,
+    createdAt: event.createdAt,
+    actorUserId: event.actorUserId,
+    actorRole: event.role,
+    approvedUserId,
+    approvedRole,
+  };
 }
 
 function toUserApprovalItem(user: ClerkUserLike): UserApprovalItem {
@@ -115,10 +159,15 @@ export async function GET() {
   const users = usersResponse.data.map((user) => toUserApprovalItem(user as unknown as ClerkUserLike));
   const pendingUsers = users.filter((user) => user.role === "pending");
   const approvedUsers = users.filter((user) => user.role !== "pending");
+  const recentApprovalEvents = (await listAuditEvents(APPROVAL_AUDIT_SCAN_LIMIT))
+    .map(toApprovalAuditItem)
+    .filter((item): item is ApprovalAuditItem => !!item)
+    .slice(0, APPROVAL_AUDIT_RETURN_LIMIT);
 
   return Response.json({
     items: pendingUsers,
     approvedUsers,
+    recentApprovalEvents,
     approvedRoles: APPROVED_ROLES,
     totalUsers: users.length,
   });
@@ -164,6 +213,22 @@ export async function PATCH(request: Request) {
       role: payload.role,
     },
   });
+
+  const auditEvent: StoredAuditEvent = {
+    id: crypto.randomUUID(),
+    actorUserId: session.userId,
+    role: requireApprovedRole(role),
+    createdAt: new Date().toISOString(),
+    eventType: "command",
+    action: APPROVAL_AUDIT_ACTION,
+    targetType: APPROVAL_AUDIT_TARGET,
+    targetId: payload.userId,
+    details: {
+      approvedUserId: payload.userId,
+      approvedRole: payload.role,
+    },
+  };
+  await appendAuditEvent(auditEvent);
 
   return Response.json({
     ok: true,

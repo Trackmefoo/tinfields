@@ -14,9 +14,19 @@ type UserApprovalItem = {
   role: ApprovalRole | "pending";
 };
 
+type ApprovalAuditItem = {
+  id: string;
+  createdAt: string;
+  actorUserId: string;
+  actorRole: ApprovalRole;
+  approvedUserId?: string;
+  approvedRole?: ApprovalRole;
+};
+
 type ApprovalListResponse = {
   items?: UserApprovalItem[];
   approvedUsers?: UserApprovalItem[];
+  recentApprovalEvents?: ApprovalAuditItem[];
   approvedRoles?: ApprovalRole[];
   totalUsers?: number;
   error?: string;
@@ -50,6 +60,7 @@ function normalizeRoles(value: unknown): ApprovalRole[] {
 export default function AccessApprovalPage() {
   const [pendingUsers, setPendingUsers] = useState<UserApprovalItem[]>([]);
   const [approvedUsers, setApprovedUsers] = useState<UserApprovalItem[]>([]);
+  const [approvalEvents, setApprovalEvents] = useState<ApprovalAuditItem[]>([]);
   const [approvedRoles, setApprovedRoles] = useState<ApprovalRole[]>([
     "operator",
     "grow_manager",
@@ -77,10 +88,12 @@ export default function AccessApprovalPage() {
 
       const pending = Array.isArray(payload.items) ? payload.items : [];
       const approved = Array.isArray(payload.approvedUsers) ? payload.approvedUsers : [];
+      const events = Array.isArray(payload.recentApprovalEvents) ? payload.recentApprovalEvents : [];
       const roles = normalizeRoles(payload.approvedRoles);
 
       setPendingUsers(pending);
       setApprovedUsers(approved);
+      setApprovalEvents(events);
       setApprovedRoles(roles);
 
       setSelectedRoles((current) => {
@@ -116,10 +129,12 @@ export default function AccessApprovalPage() {
 
         const pending = Array.isArray(payload.items) ? payload.items : [];
         const approved = Array.isArray(payload.approvedUsers) ? payload.approvedUsers : [];
+        const events = Array.isArray(payload.recentApprovalEvents) ? payload.recentApprovalEvents : [];
         const roles = normalizeRoles(payload.approvedRoles);
 
         setPendingUsers(pending);
         setApprovedUsers(approved);
+        setApprovalEvents(events);
         setApprovedRoles(roles);
 
         setSelectedRoles((current) => {
@@ -318,6 +333,35 @@ export default function AccessApprovalPage() {
                     {user.fullName} - <span className="uppercase">{user.role}</span>
                   </p>
                   <p className="text-xs text-slate-500">{user.email}</p>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-white/60 bg-white/75 p-6 shadow-[0_18px_40px_-26px_rgba(15,23,42,.5)] backdrop-blur-sm">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">Recent Approval Activity</h2>
+            <span className="text-xs uppercase tracking-wide text-slate-500">
+              {isLoading ? "Loading..." : `${approvalEvents.length} shown`}
+            </span>
+          </div>
+
+          <div className="mt-4 space-y-2">
+            {approvalEvents.length === 0 ? (
+              <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                No approval activity recorded yet.
+              </p>
+            ) : (
+              approvalEvents.map((event) => (
+                <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700" key={event.id}>
+                  <p className="font-medium">
+                    {event.approvedUserId ?? "Unknown user"} approved as{" "}
+                    <span className="uppercase">{event.approvedRole ?? "operator"}</span>
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    By {event.actorUserId} ({event.actorRole}) at {formatDateTime(event.createdAt)}
+                  </p>
                 </div>
               ))
             )}
