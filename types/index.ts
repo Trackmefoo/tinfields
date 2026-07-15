@@ -28,9 +28,11 @@ export interface CropRecipe {
 export interface ActuatorCommand {
   deviceId: string;
   command: "on" | "off" | "pulse";
+  farmId?: string;
   zone?: string;
   payload?: Record<string, unknown>;
   actorUserId?: string;
+  source?: "manual" | "autonomous";
 }
 
 export type AuditEventType = "command" | "planting" | "harvest";
@@ -153,6 +155,8 @@ export type FarmTopologyMode = "tier-as-zone" | "column-as-zone" | "custom";
 export type FarmNodeKind = "farm" | "system" | "column" | "tier" | "zone";
 export type CommandLifecycle = "queued" | "validated" | "blocked" | "sent" | "acked" | "failed" | "timed_out";
 export type AlertSeverity = "info" | "warning" | "critical";
+export type AlertComparison = "gt" | "gte" | "lt" | "lte";
+export type AlertEventStatus = "open" | "acknowledged" | "resolved";
 
 export interface Farm {
   id: string;
@@ -258,10 +262,15 @@ export interface ZoneAssignmentPlan {
 
 export interface TelemetryPoint {
   id: string;
+  farmId: string;
   zoneId: string;
-  sensorId?: string;
-  measuredAt: string;
-  values: Record<string, number>;
+  deviceId?: string;
+  sensorType?: string;
+  metric: string;
+  value: number;
+  unit?: string;
+  recordedAt: string;
+  createdAt: string;
 }
 
 export interface AlertRule {
@@ -269,9 +278,12 @@ export interface AlertRule {
   farmId: string;
   zoneId?: string;
   metric: string;
+  comparison: AlertComparison;
   threshold: number;
+  durationSeconds: number;
   severity: AlertSeverity;
   enabled: boolean;
+  createdByUserId: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -282,9 +294,27 @@ export interface AlertEvent {
   farmId: string;
   zoneId?: string;
   severity: AlertSeverity;
+  status: AlertEventStatus;
   message: string;
+  triggeredValue: number;
+  acknowledgedByUserId?: string;
+  resolvedAt?: string;
+  resolvedByUserId?: string;
+  triggeredAt: string;
   acknowledgedAt?: string;
   createdAt: string;
+}
+
+export interface DeviceHeartbeat {
+  id: string;
+  farmId: string;
+  zoneId?: string;
+  deviceId: string;
+  status: string;
+  lastSeenAt: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Command {
@@ -292,10 +322,15 @@ export interface Command {
   farmId: string;
   zoneId?: string;
   actuatorId?: string;
+  requestedByUserId: string;
+  requestedByRole: "operator" | "grow_manager" | "admin";
   source: "manual" | "autonomous";
   lifecycle: CommandLifecycle;
   action: string;
   payload?: Record<string, unknown>;
+  validationMessage?: string;
+  blockedReason?: string;
+  cooldownUntil?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -305,7 +340,10 @@ export interface CommandExecution {
   commandId: string;
   lifecycle: CommandLifecycle;
   validationMessage?: string;
-  executedAt?: string;
+  dispatchedAt?: string;
+  acknowledgedAt?: string;
+  failedAt?: string;
+  timeoutAt?: string;
   createdAt: string;
   updatedAt: string;
 }

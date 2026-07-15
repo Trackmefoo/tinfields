@@ -33,6 +33,40 @@ enum QualityGrade {
   reject
 }
 
+enum CommandSource {
+  manual
+  autonomous
+}
+
+enum CommandLifecycle {
+  queued
+  validated
+  blocked
+  sent
+  acked
+  failed
+  timed_out
+}
+
+enum AlertSeverity {
+  info
+  warning
+  critical
+}
+
+enum AlertComparison {
+  gt
+  gte
+  lt
+  lte
+}
+
+enum AlertEventStatus {
+  open
+  acknowledged
+  resolved
+}
+
 model AuditEvent {
   id         String         @id
   actorUserId String
@@ -46,6 +80,133 @@ model AuditEvent {
 
   @@index([createdAt])
   @@index([actorUserId])
+}
+
+model Command {
+  id                 String          @id
+  farmId             String
+  zoneId             String?
+  actuatorId         String?
+  source             CommandSource
+  lifecycle          CommandLifecycle
+  action             String
+  payload            Json?
+  requestedByUserId  String
+  requestedByRole    AppRole
+  validationMessage  String?
+  blockedReason      String?
+  cooldownUntil      DateTime?
+  createdAt         DateTime
+  updatedAt         DateTime
+
+  executions CommandExecution[]
+
+  @@index([createdAt])
+  @@index([farmId])
+  @@index([zoneId])
+  @@index([source])
+  @@index([lifecycle])
+}
+
+model CommandExecution {
+  id              String          @id
+  commandId       String
+  lifecycle       CommandLifecycle
+  validationMessage String?
+  dispatchedAt    DateTime?
+  acknowledgedAt  DateTime?
+  failedAt        DateTime?
+  timeoutAt       DateTime?
+  createdAt       DateTime
+  updatedAt       DateTime
+
+  command Command @relation(fields: [commandId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([commandId])
+  @@index([createdAt])
+  @@index([lifecycle])
+}
+
+model TelemetryPoint {
+  id         String   @id
+  farmId     String
+  zoneId     String
+  deviceId   String?
+  sensorType String?
+  metric     String
+  value      Float
+  unit       String?
+  recordedAt DateTime
+  createdAt  DateTime
+
+  @@index([createdAt])
+  @@index([farmId])
+  @@index([zoneId])
+  @@index([metric])
+  @@index([recordedAt])
+}
+
+model AlertRule {
+  id               String          @id
+  farmId           String
+  zoneId           String?
+  metric           String
+  comparison       AlertComparison
+  threshold        Float
+  durationSeconds  Int             @default(0)
+  severity         AlertSeverity
+  enabled          Boolean         @default(true)
+  createdByUserId  String
+  createdAt        DateTime
+  updatedAt        DateTime
+
+  events AlertEvent[]
+
+  @@index([farmId])
+  @@index([zoneId])
+  @@index([metric])
+  @@index([enabled])
+}
+
+model AlertEvent {
+  id                    String           @id
+  ruleId                String
+  farmId                String
+  zoneId                String?
+  severity              AlertSeverity
+  status                AlertEventStatus @default(open)
+  message               String
+  triggeredValue        Float
+  acknowledgedAt        DateTime?
+  acknowledgedByUserId  String?
+  resolvedAt            DateTime?
+  resolvedByUserId      String?
+  triggeredAt           DateTime
+  createdAt             DateTime
+
+  rule AlertRule @relation(fields: [ruleId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([createdAt])
+  @@index([farmId])
+  @@index([zoneId])
+  @@index([status])
+  @@index([severity])
+}
+
+model DeviceHeartbeat {
+  id         String   @id
+  farmId     String
+  zoneId     String?
+  deviceId   String   @unique
+  status     String
+  lastSeenAt DateTime
+  metadata   Json?
+  createdAt  DateTime
+  updatedAt  DateTime
+
+  @@index([farmId])
+  @@index([zoneId])
+  @@index([lastSeenAt])
 }
 
 model PlantingBatch {

@@ -490,6 +490,12 @@ export default function DashboardPage() {
             </Link>
             <Link
               className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700 hover:bg-slate-50"
+              href="/dashboard/alerts"
+            >
+              Alerts
+            </Link>
+            <Link
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700 hover:bg-slate-50"
               href="/dashboard/yield"
             >
               Yield Intelligence
@@ -520,7 +526,7 @@ export default function DashboardPage() {
           <article className="rounded-3xl border border-white/60 bg-white/75 p-6 shadow-[0_18px_40px_-26px_rgba(15,23,42,.5)] backdrop-blur-sm">
             <h2 className="text-lg font-semibold">Quick Controls</h2>
             <p className="mt-1 text-sm text-slate-600">
-              Commands publish to your MQTT control topic.
+              Manual commands pass through backend queue validation, then publish to MQTT.
             </p>
             <div className="mt-6 grid gap-3">
               <LightControl

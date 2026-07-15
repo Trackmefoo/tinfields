@@ -12,6 +12,17 @@ type AccessChangeNotification = {
   actorUserId: string;
 };
 
+type AlertEventNotification = {
+  severity: "info" | "warning" | "critical";
+  message: string;
+  farmId: string;
+  zoneId?: string;
+  metric: string;
+  threshold: number;
+  value: number;
+  ruleId: string;
+};
+
 type NotificationResult = {
   provider: "resend" | "fallback";
   delivered: boolean;
@@ -142,6 +153,72 @@ export async function sendAccessChangeNotification(notification: AccessChangeNot
         from: alertFromEmail,
         to: [alertToEmail],
         subject: subjectMap[notification.action],
+        text,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return {
+        provider: "fallback",
+        delivered: true,
+        usedFallback: true,
+        error: `Primary provider request failed (${response.status}): ${errorText.slice(0, 200)}`,
+      };
+    }
+
+    return {
+      provider: "resend",
+      delivered: true,
+      usedFallback: false,
+    };
+  } catch (error) {
+    return {
+      provider: "fallback",
+      delivered: true,
+      usedFallback: true,
+      error: error instanceof Error ? error.message : "Unknown notification error",
+    };
+  }
+}
+
+export async function sendAlertEventNotification(notification: AlertEventNotification): Promise<NotificationResult> {
+  const { resendApiKey, alertFromEmail, alertToEmail } = getMessagingConfig();
+
+  const subject = `TinFields ${notification.severity.toUpperCase()} alert: ${notification.metric}`;
+  const text = [
+    `Severity: ${notification.severity}`,
+    `Message: ${notification.message}`,
+    `Farm: ${notification.farmId}`,
+    notification.zoneId ? `Zone: ${notification.zoneId}` : undefined,
+    `Metric: ${notification.metric}`,
+    `Threshold: ${notification.threshold}`,
+    `Observed value: ${notification.value}`,
+    `Rule ID: ${notification.ruleId}`,
+  ]
+    .filter((line): line is string => typeof line === "string" && line.length > 0)
+    .join("\n");
+
+  if (!hasValue(resendApiKey) || !hasValue(alertFromEmail) || !hasValue(alertToEmail)) {
+    return {
+      provider: "fallback",
+      delivered: true,
+      usedFallback: true,
+      error: "Primary provider is not fully configured; fallback path used.",
+    };
+  }
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: alertFromEmail,
+        to: [alertToEmail],
+        subject,
         text,
       }),
     });
