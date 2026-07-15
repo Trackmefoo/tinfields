@@ -39,6 +39,18 @@ type ProfileComparisonRow = {
   rejectRateDelta: number;
 };
 
+type ZoneTrendRow = {
+  zoneId: string;
+  currentUsable: number;
+  previousUsable: number;
+  usableDelta: number;
+  currentRejectRate: number;
+  previousRejectRate: number;
+  rejectRateDelta: number;
+  currentBatchCount: number;
+  previousBatchCount: number;
+};
+
 export default function YieldDashboardPage() {
   const [windowDays, setWindowDays] = useState(120);
   const [currentData, setCurrentData] = useState<YieldKpiResponse | null>(null);
@@ -342,6 +354,96 @@ export default function YieldDashboardPage() {
     [profileComparisonRows],
   );
 
+  const zoneTrendRows = useMemo(() => {
+    if (!currentData || !previousData) {
+      return [];
+    }
+
+    const byZone = new Map<
+      string,
+      {
+        currentUsable: number;
+        currentReject: number;
+        currentTotal: number;
+        currentBatchCount: number;
+        previousUsable: number;
+        previousReject: number;
+        previousTotal: number;
+        previousBatchCount: number;
+      }
+    >();
+
+    for (const item of currentData.items) {
+      const entry =
+        byZone.get(item.zoneId) ??
+        {
+          currentUsable: 0,
+          currentReject: 0,
+          currentTotal: 0,
+          currentBatchCount: 0,
+          previousUsable: 0,
+          previousReject: 0,
+          previousTotal: 0,
+          previousBatchCount: 0,
+        };
+
+      entry.currentUsable += item.usableWeightKg;
+      entry.currentReject += item.rejectWeightKg;
+      entry.currentTotal += item.usableWeightKg + item.rejectWeightKg;
+      entry.currentBatchCount += 1;
+      byZone.set(item.zoneId, entry);
+    }
+
+    for (const item of previousData.items) {
+      const entry =
+        byZone.get(item.zoneId) ??
+        {
+          currentUsable: 0,
+          currentReject: 0,
+          currentTotal: 0,
+          currentBatchCount: 0,
+          previousUsable: 0,
+          previousReject: 0,
+          previousTotal: 0,
+          previousBatchCount: 0,
+        };
+
+      entry.previousUsable += item.usableWeightKg;
+      entry.previousReject += item.rejectWeightKg;
+      entry.previousTotal += item.usableWeightKg + item.rejectWeightKg;
+      entry.previousBatchCount += 1;
+      byZone.set(item.zoneId, entry);
+    }
+
+    const rows: ZoneTrendRow[] = Array.from(byZone.entries()).map(
+      ([zoneId, value]) => {
+        const currentRejectRate =
+          value.currentTotal > 0
+            ? (value.currentReject / value.currentTotal) * 100
+            : 0;
+        const previousRejectRate =
+          value.previousTotal > 0
+            ? (value.previousReject / value.previousTotal) * 100
+            : 0;
+
+        return {
+          zoneId,
+          currentUsable: value.currentUsable,
+          previousUsable: value.previousUsable,
+          usableDelta: value.currentUsable - value.previousUsable,
+          currentRejectRate,
+          previousRejectRate,
+          rejectRateDelta: currentRejectRate - previousRejectRate,
+          currentBatchCount: value.currentBatchCount,
+          previousBatchCount: value.previousBatchCount,
+        };
+      },
+    );
+
+    rows.sort((a, b) => b.usableDelta - a.usableDelta);
+    return rows;
+  }, [currentData, previousData]);
+
   return (
     <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_15%_12%,#e8f9da_0%,#f5fde7_28%,#eef7ff_60%,#f8f1e6_100%)] text-slate-900">
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(16,185,129,.08),rgba(14,116,144,.08),rgba(245,158,11,.08))]" />
@@ -569,6 +671,58 @@ export default function YieldDashboardPage() {
                   <tr>
                     <td className="px-3 py-4 text-sm text-slate-600" colSpan={5}>
                       No profile-level comparison data yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-white/60 bg-white/75 p-6 shadow-[0_18px_40px_-26px_rgba(15,23,42,.5)] backdrop-blur-sm">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">Zone Trend Evidence</h2>
+            <p className="text-xs uppercase tracking-wide text-slate-500">
+              {isLoading ? "Refreshing..." : `${zoneTrendRows.length} zones`}
+            </p>
+          </div>
+
+          <div className="mt-4 overflow-x-auto">
+            <table className="min-w-full border-separate border-spacing-y-2">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
+                  <th className="px-3 py-2">Zone</th>
+                  <th className="px-3 py-2">Current Yield (kg)</th>
+                  <th className="px-3 py-2">Previous Yield (kg)</th>
+                  <th className="px-3 py-2">Yield Delta</th>
+                  <th className="px-3 py-2">Reject Delta</th>
+                  <th className="px-3 py-2">Batches (Current)</th>
+                  <th className="px-3 py-2">Batches (Previous)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {zoneTrendRows.length ? (
+                  zoneTrendRows.map((row) => (
+                    <tr className="rounded-xl bg-white text-sm text-slate-700" key={row.zoneId}>
+                      <td className="rounded-l-xl px-3 py-2 font-semibold">{row.zoneId}</td>
+                      <td className="px-3 py-2">{row.currentUsable.toFixed(2)}</td>
+                      <td className="px-3 py-2">{row.previousUsable.toFixed(2)}</td>
+                      <td className="px-3 py-2">
+                        {row.usableDelta > 0 ? "+" : ""}
+                        {row.usableDelta.toFixed(2)} kg
+                      </td>
+                      <td className="px-3 py-2">
+                        {row.rejectRateDelta > 0 ? "+" : ""}
+                        {row.rejectRateDelta.toFixed(2)}%
+                      </td>
+                      <td className="px-3 py-2">{row.currentBatchCount}</td>
+                      <td className="rounded-r-xl px-3 py-2">{row.previousBatchCount}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td className="px-3 py-4 text-sm text-slate-600" colSpan={7}>
+                      No zone trend data yet.
                     </td>
                   </tr>
                 )}
