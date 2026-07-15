@@ -57,7 +57,10 @@ type OpsEvidenceRow = {
   createdAt: string;
   title: string;
   detail: string;
-  href: string;
+  links: Array<{
+    href: string;
+    label: string;
+  }>;
 };
 
 function getDetailsString(details: Record<string, unknown> | undefined, key: string) {
@@ -535,7 +538,16 @@ export default function YieldDashboardPage() {
                 ? "Harvest finalized in monitored area"
                 : "Harvest logged in monitored area",
               detail: `Zone ${zoneId ?? "unknown"}`,
-              href: "/dashboard",
+              links: [
+                {
+                  href: "/dashboard",
+                  label: "Open Dashboard",
+                },
+                {
+                  href: "/dashboard/yield",
+                  label: "Open Yield",
+                },
+              ],
             };
           }
           case "assign-batch-zone":
@@ -546,7 +558,16 @@ export default function YieldDashboardPage() {
               createdAt: event.createdAt,
               title: "Zone assignment lifecycle changed",
               detail: `Zone ${zoneId ?? "unknown"}`,
-              href: "/dashboard/catalog",
+              links: [
+                {
+                  href: "/dashboard/catalog",
+                  label: "Open Catalog",
+                },
+                {
+                  href: "/dashboard/yield",
+                  label: "Open Yield",
+                },
+              ],
             };
           case "create-planting-batch":
             return {
@@ -555,7 +576,16 @@ export default function YieldDashboardPage() {
               createdAt: event.createdAt,
               title: "New planting batch entered",
               detail: `${cropName ?? "Crop"}${zoneId ? ` in ${zoneId}` : ""}`,
-              href: "/dashboard",
+              links: [
+                {
+                  href: "/dashboard",
+                  label: "Open Dashboard",
+                },
+                {
+                  href: "/dashboard/yield",
+                  label: "Open Yield",
+                },
+              ],
             };
           case "update-crop-catalog-item":
             return {
@@ -564,7 +594,16 @@ export default function YieldDashboardPage() {
               createdAt: event.createdAt,
               title: "Crop catalog recipe changed",
               detail: "Catalog item fields were updated",
-              href: "/dashboard/catalog",
+              links: [
+                {
+                  href: "/dashboard/catalog",
+                  label: "Open Catalog",
+                },
+                {
+                  href: "/dashboard/yield",
+                  label: "Open Yield",
+                },
+              ],
             };
           case "integration-readiness-test": {
             const provider = getDetailsString(details, "provider") ?? "unknown provider";
@@ -578,7 +617,16 @@ export default function YieldDashboardPage() {
                 ? "Messaging readiness test succeeded"
                 : "Messaging readiness test failed",
               detail: `Provider: ${provider}`,
-              href: "/dashboard/integrations",
+              links: [
+                {
+                  href: "/dashboard/integrations",
+                  label: "Open Integrations",
+                },
+                {
+                  href: "/dashboard/yield",
+                  label: "Open Yield",
+                },
+              ],
             };
           }
           default:
@@ -588,7 +636,12 @@ export default function YieldDashboardPage() {
               createdAt: event.createdAt,
               title: "Operational change detected",
               detail: event.targetType,
-              href: "/dashboard",
+              links: [
+                {
+                  href: "/dashboard",
+                  label: "Open Dashboard",
+                },
+              ],
             };
         }
       })
@@ -903,13 +956,16 @@ export default function YieldDashboardPage() {
                     <p className="text-xs text-slate-500">{formatDateTime(row.createdAt)}</p>
                   </div>
                   <p className="mt-1 text-sm text-slate-600">{row.detail}</p>
-                  <div className="mt-3">
-                    <Link
-                      className="text-xs font-semibold uppercase tracking-wide text-emerald-700 hover:text-emerald-800"
-                      href={row.href}
-                    >
-                      Open related workspace
-                    </Link>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {row.links.map((link) => (
+                      <Link
+                        className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-700 hover:border-emerald-300 hover:bg-emerald-100 hover:text-emerald-800"
+                        href={link.href}
+                        key={`${row.id}-${link.href}`}
+                      >
+                        {link.label}
+                      </Link>
+                    ))}
                   </div>
                 </article>
               ))
