@@ -6,7 +6,7 @@ import {
   listHarvestRecords,
   markBatchHarvested,
 } from "@/lib/crop-store";
-import { extractRoleFromClaims, hasRequiredRole } from "@/lib/authz";
+import { extractRoleFromClaims, hasRequiredRole, requireApprovedRole } from "@/lib/authz";
 import type { HarvestRecord, QualityGrade, StoredAuditEvent } from "@/types";
 
 const LIMIT_QUERY = "limit";
@@ -228,7 +228,7 @@ export async function POST(request: Request) {
   const auditEvent: StoredAuditEvent = {
     id: crypto.randomUUID(),
     actorUserId: session.userId,
-    role,
+    role: requireApprovedRole(role),
     createdAt: nowIso,
     eventType: "harvest",
     action: "log-harvest",

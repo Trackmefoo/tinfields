@@ -1,7 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { appendAuditEvent } from "@/lib/audit-store";
-import { extractRoleFromClaims, hasRequiredRole } from "@/lib/authz";
+import { extractRoleFromClaims, hasRequiredRole, requireApprovedRole } from "@/lib/authz";
 import type { BatchZoneAssignment, StoredAuditEvent } from "@/types";
 
 const LIMIT_QUERY = "limit";
@@ -176,7 +176,7 @@ export async function POST(request: Request) {
   const auditEvent: StoredAuditEvent = {
     id: crypto.randomUUID(),
     actorUserId: session.userId,
-    role,
+    role: requireApprovedRole(role),
     createdAt: now.toISOString(),
     eventType: "planting",
     action: "assign-batch-zone",

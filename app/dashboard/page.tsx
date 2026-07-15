@@ -119,6 +119,8 @@ function roleLabel(role: AppRole) {
       return "Admin";
     case "grow_manager":
       return "Grow Manager";
+    case "pending":
+      return "Pending Approval";
     default:
       return "Operator";
   }

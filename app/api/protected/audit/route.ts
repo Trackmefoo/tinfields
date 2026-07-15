@@ -1,6 +1,11 @@
 import { auth } from "@clerk/nextjs/server";
 import { appendAuditEvent, listAuditEvents } from "@/lib/audit-store";
-import { extractRoleFromClaims, hasRequiredRole, type AppRole } from "@/lib/authz";
+import {
+  extractRoleFromClaims,
+  hasRequiredRole,
+  requireApprovedRole,
+  type AppRole,
+} from "@/lib/authz";
 import type { AuditEventPayload, AuditEventType, StoredAuditEvent } from "@/types";
 
 const LIMIT_QUERY = "limit";
@@ -142,7 +147,7 @@ export async function POST(request: Request) {
     ...payload,
     id: crypto.randomUUID(),
     actorUserId: session.userId,
-    role,
+    role: requireApprovedRole(role),
     createdAt: new Date().toISOString(),
   };
 

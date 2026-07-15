@@ -1,4 +1,6 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
+import { extractRoleFromClaims, isActiveRole } from "@/lib/authz";
 
 const isProtectedRoute = createRouteMatcher([
   "/dashboard(.*)",
@@ -7,7 +9,27 @@ const isProtectedRoute = createRouteMatcher([
 
 export default clerkMiddleware(async (auth, req) => {
   if (isProtectedRoute(req)) {
-    await auth.protect();
+    const session = await auth();
+
+    if (!session.userId) {
+      await auth.protect();
+      return;
+    }
+
+    const role = extractRoleFromClaims(session.sessionClaims);
+    if (!isActiveRole(role)) {
+      if (req.nextUrl.pathname.startsWith("/api/protected")) {
+        return NextResponse.json(
+          {
+            error: "Account pending approval",
+            role,
+          },
+          { status: 403 },
+        );
+      }
+
+      return NextResponse.redirect(new URL("/access-pending", req.url));
+    }
   }
 });
 

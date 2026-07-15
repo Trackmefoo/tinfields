@@ -1,5 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
-import { extractRoleFromClaims, hasRequiredRole } from "@/lib/authz";
+import { extractRoleFromClaims, hasRequiredRole, requireApprovedRole } from "@/lib/authz";
 import { appendAuditEvent } from "@/lib/audit-store";
 import {
   getMessagingReadinessStatus,
@@ -81,7 +81,7 @@ export async function POST(request: Request) {
   const auditEvent: StoredAuditEvent = {
     id: crypto.randomUUID(),
     actorUserId: session.userId,
-    role,
+    role: requireApprovedRole(role),
     createdAt: nowIso,
     eventType: "command",
     action: "integration-readiness-test",
