@@ -1,4 +1,4 @@
-import { connect, type IClientOptions, type MqttClient } from "mqtt";
+import mqtt, { type IClientOptions, type MqttClient } from "mqtt";
 
 let client: MqttClient | null = null;
 
@@ -15,7 +15,7 @@ export function connectMqtt(brokerUrl: string, options?: IClientOptions) {
     return client;
   }
 
-  client = connect(brokerUrl, options);
+  client = mqtt.connect(brokerUrl, options);
   return client;
 }
 
@@ -23,24 +23,36 @@ export function subscribeTopic(
   topic: string,
   onMessage: (payload: string) => void,
 ) {
-  if (!client) {
-    throw new Error("MQTT client is not connected.");
+  if (!client || !client.connected) {
+    return () => {};
   }
 
   client.subscribe(topic);
-  client.on("message", (incomingTopic, message) => {
+  const listener = (incomingTopic: string, message: Uint8Array) => {
     if (incomingTopic === topic) {
       onMessage(message.toString());
     }
-  });
+  };
+
+  client.on("message", listener);
+
+  return () => {
+    if (!client) {
+      return;
+    }
+
+    client.off("message", listener);
+    client.unsubscribe(topic);
+  };
 }
 
 export function publishTopic(topic: string, payload: string) {
-  if (!client) {
-    throw new Error("MQTT client is not connected.");
+  if (!client || !client.connected) {
+    return false;
   }
 
   client.publish(topic, payload);
+  return true;
 }
 
 export function disconnectMqtt() {
