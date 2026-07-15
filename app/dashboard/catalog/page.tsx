@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import type { BatchZoneAssignment, CropCatalogItem, PlantingBatch } from "@/types";
 
 type CatalogEditState = {
@@ -32,16 +33,24 @@ function toEditState(item: CropCatalogItem): CatalogEditState {
   };
 }
 
-export default function CatalogDashboardPage() {
+function CatalogDashboardContent() {
+  const searchParams = useSearchParams();
+  const initialSearch = searchParams.get("search") ?? "";
+  const initialZoneFilter = searchParams.get("zone") ?? "all";
+  const initialAssignmentState = searchParams.get("assignmentState");
   const [catalogItems, setCatalogItems] = useState<CropCatalogItem[]>([]);
   const [assignments, setAssignments] = useState<BatchZoneAssignment[]>([]);
   const [batches, setBatches] = useState<PlantingBatch[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSavingCatalog, setIsSavingCatalog] = useState(false);
   const [assignmentActionId, setAssignmentActionId] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [zoneFilter, setZoneFilter] = useState("all");
-  const [assignmentStateFilter, setAssignmentStateFilter] = useState<"all" | "open" | "closed">("all");
+  const [search, setSearch] = useState(initialSearch);
+  const [zoneFilter, setZoneFilter] = useState(initialZoneFilter);
+  const [assignmentStateFilter, setAssignmentStateFilter] = useState<"all" | "open" | "closed">(
+    initialAssignmentState === "open" || initialAssignmentState === "closed"
+      ? initialAssignmentState
+      : "all",
+  );
   const [editingCatalogId, setEditingCatalogId] = useState<string | null>(null);
   const [catalogEdit, setCatalogEdit] = useState<CatalogEditState | null>(null);
   const [editingAssignmentId, setEditingAssignmentId] = useState<string | null>(null);
@@ -351,6 +360,14 @@ export default function CatalogDashboardPage() {
             <p className="mt-2 text-sm text-slate-600 md:text-base">
               Filter, edit crop references, and close assignment intervals safely.
             </p>
+            {initialSearch || initialZoneFilter !== "all" || assignmentStateFilter !== "all" ? (
+              <p className="mt-2 text-xs text-slate-500">
+                Scoped view:
+                {initialZoneFilter !== "all" ? ` zone ${initialZoneFilter}` : " all zones"}
+                {initialSearch ? ` | search ${initialSearch}` : ""}
+                {assignmentStateFilter !== "all" ? ` | ${assignmentStateFilter} assignments` : ""}
+              </p>
+            ) : null}
           </div>
           <div className="flex items-center gap-3">
             <Link
@@ -653,5 +670,13 @@ export default function CatalogDashboardPage() {
         </section>
       </main>
     </div>
+  );
+}
+
+export default function CatalogDashboardPage() {
+  return (
+    <Suspense fallback={null}>
+      <CatalogDashboardContent />
+    </Suspense>
   );
 }

@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import type { MessagingReadinessStatus, StoredAuditEvent } from "@/types";
 
 type ReadinessResponse = {
@@ -72,7 +73,8 @@ function formatDateTime(iso: string) {
   return date.toLocaleString();
 }
 
-export default function IntegrationsReadinessPage() {
+function IntegrationsReadinessContent() {
+  const searchParams = useSearchParams();
   const [data, setData] = useState<ReadinessResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isTesting, setIsTesting] = useState(false);
@@ -80,6 +82,29 @@ export default function IntegrationsReadinessPage() {
   const [lastTest, setLastTest] = useState<TestResponse | null>(null);
   const [readinessLog, setReadinessLog] = useState<IntegrationReadinessLogItem[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  const providerFilter = searchParams.get("provider") ?? "all";
+  const deliveryFilter = searchParams.get("delivery") ?? "all";
+
+  const filteredReadinessLog = useMemo(() => {
+    return readinessLog.filter((entry) => {
+      if (providerFilter !== "all" && providerFilter !== entry.provider) {
+        return false;
+      }
+
+      if (deliveryFilter === "delivered" && entry.delivered !== true) {
+        return false;
+      }
+      if (deliveryFilter === "failed" && entry.delivered !== false) {
+        return false;
+      }
+      if (deliveryFilter === "unknown" && entry.delivered !== null) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [deliveryFilter, providerFilter, readinessLog]);
 
   async function loadReadiness() {
     setIsLoading(true);
@@ -232,6 +257,11 @@ export default function IntegrationsReadinessPage() {
             <p className="mt-2 text-sm text-slate-600 md:text-base">
               Validate provider config and run a test notification with fallback visibility.
             </p>
+            {providerFilter !== "all" || deliveryFilter !== "all" ? (
+              <p className="mt-2 text-xs text-slate-500">
+                Scoped log: provider {providerFilter} | delivery {deliveryFilter}
+              </p>
+            ) : null}
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -323,20 +353,20 @@ export default function IntegrationsReadinessPage() {
           </article>
         </section>
 
-        <section className="rounded-3xl border border-white/60 bg-white/75 p-6 shadow-[0_18px_40px_-26px_rgba(15,23,42,.5)] backdrop-blur-sm">
+        <section className="rounded-3xl border border-white/60 bg-white/75 p-6 shadow-[0_18px_40px_-26px_rgba(15,23,42,.5)] backdrop-blur-sm" id="readiness-log">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold">Recent Readiness Test Log</h2>
             <span className="text-xs uppercase tracking-wide text-slate-500">
-              {isLoading ? "Loading..." : `${readinessLog.length} entries`}
+              {isLoading ? "Loading..." : `${filteredReadinessLog.length} entries`}
             </span>
           </div>
           <div className="mt-4 space-y-2">
-            {readinessLog.length === 0 ? (
+            {filteredReadinessLog.length === 0 ? (
               <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
                 No readiness test attempts have been recorded yet.
               </p>
             ) : (
-              readinessLog.map((entry) => (
+              filteredReadinessLog.map((entry) => (
                 <div
                   className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
                   key={entry.id}
@@ -360,5 +390,13 @@ export default function IntegrationsReadinessPage() {
         </section>
       </main>
     </div>
+  );
+}
+
+export default function IntegrationsReadinessPage() {
+  return (
+    <Suspense fallback={null}>
+      <IntegrationsReadinessContent />
+    </Suspense>
   );
 }

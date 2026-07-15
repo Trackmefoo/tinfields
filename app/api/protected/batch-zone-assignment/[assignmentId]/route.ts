@@ -165,6 +165,8 @@ export async function PATCH(
     targetType: "batch_zone_assignment",
     targetId: updated.id,
     details: {
+      batchId: updated.batchId,
+      zoneId: updated.zoneId,
       closed: !!updated.unassignedAt,
       assignmentReason: updated.assignmentReason,
     },

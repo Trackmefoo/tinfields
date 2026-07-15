@@ -236,6 +236,8 @@ export async function POST(request: Request) {
     targetId: stored.id,
     details: {
       batchId: stored.batchId,
+      cropName: batch.cropName,
+      cultivar: batch.cultivar,
       zoneId: stored.zoneId,
       usableWeightKg: stored.usableWeightKg,
       rejectWeightKg: stored.rejectWeightKg,

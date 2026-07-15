@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import type { StoredAuditEvent, YieldKpiResponse } from "@/types";
 
 function formatDateTime(iso: string) {
@@ -16,6 +17,61 @@ function formatDelta(current: number, previous: number, suffix = "") {
   const delta = current - previous;
   const sign = delta > 0 ? "+" : "";
   return `${sign}${delta.toFixed(2)}${suffix}`;
+}
+
+function buildScopedHref(
+  pathname: string,
+  params: Record<string, string | undefined>,
+  hash?: string,
+) {
+  const query = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value && value.trim()) {
+      query.set(key, value);
+    }
+  }
+
+  const queryString = query.toString();
+  const hashSuffix = hash ? `#${hash}` : "";
+  return queryString ? `${pathname}?${queryString}${hashSuffix}` : `${pathname}${hashSuffix}`;
+}
+
+function matchesYieldScope(
+  item: YieldKpiResponse["items"][number],
+  scope: { zoneId?: string; cropName?: string; cultivar?: string },
+) {
+  if (scope.zoneId && item.zoneId !== scope.zoneId) {
+    return false;
+  }
+  if (scope.cropName && item.cropName !== scope.cropName) {
+    return false;
+  }
+  if (scope.cultivar !== undefined && (item.cultivar ?? "") !== scope.cultivar) {
+    return false;
+  }
+
+  return true;
+}
+
+function summarizeYieldItems(items: YieldKpiResponse["items"]) {
+  const harvestedBatchCount = items.length;
+  const totalUsableWeightKg = items.reduce((sum, item) => sum + item.usableWeightKg, 0);
+  const totalRejectWeightKg = items.reduce((sum, item) => sum + item.rejectWeightKg, 0);
+  const avgCycleDays =
+    harvestedBatchCount > 0
+      ? items.reduce((sum, item) => sum + item.cycleDays, 0) / harvestedBatchCount
+      : 0;
+  const totalWeight = totalUsableWeightKg + totalRejectWeightKg;
+  const avgRejectRatePct = totalWeight > 0 ? (totalRejectWeightKg / totalWeight) * 100 : 0;
+
+  return {
+    harvestedBatchCount,
+    totalUsableWeightKg,
+    totalRejectWeightKg,
+    avgCycleDays,
+    avgRejectRatePct,
+  };
 }
 
 type CropComparisonRow = {
@@ -71,13 +127,22 @@ function getDetailsString(details: Record<string, unknown> | undefined, key: str
   return value;
 }
 
-export default function YieldDashboardPage() {
+function YieldDashboardContent() {
+  const searchParams = useSearchParams();
   const [windowDays, setWindowDays] = useState(120);
   const [currentData, setCurrentData] = useState<YieldKpiResponse | null>(null);
   const [previousData, setPreviousData] = useState<YieldKpiResponse | null>(null);
   const [auditEvents, setAuditEvents] = useState<StoredAuditEvent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const scopedZoneId = searchParams.get("zone") ?? undefined;
+  const scopedCropName = searchParams.get("crop") ?? undefined;
+  const scopedCultivarParam = searchParams.get("cultivar");
+  const scopedCultivar = scopedCultivarParam === null ? undefined : scopedCultivarParam;
+  const scopeLabel = [scopedCropName, scopedCultivar, scopedZoneId]
+    .filter((value) => value !== undefined && value !== "")
+    .join(" / ");
 
   useEffect(() => {
     async function loadYieldData() {
@@ -137,58 +202,89 @@ export default function YieldDashboardPage() {
     void loadYieldData();
   }, [windowDays]);
 
+  const filteredCurrentItems = useMemo(() => {
+    if (!currentData) {
+      return [];
+    }
+
+    return currentData.items.filter((item) =>
+      matchesYieldScope(item, {
+        zoneId: scopedZoneId,
+        cropName: scopedCropName,
+        cultivar: scopedCultivar,
+      }),
+    );
+  }, [currentData, scopedCropName, scopedCultivar, scopedZoneId]);
+
+  const filteredPreviousItems = useMemo(() => {
+    if (!previousData) {
+      return [];
+    }
+
+    return previousData.items.filter((item) =>
+      matchesYieldScope(item, {
+        zoneId: scopedZoneId,
+        cropName: scopedCropName,
+        cultivar: scopedCultivar,
+      }),
+    );
+  }, [previousData, scopedCropName, scopedCultivar, scopedZoneId]);
+
   const cards = useMemo(() => {
     if (!currentData || !previousData) {
       return [];
     }
 
+    const currentSummary = summarizeYieldItems(filteredCurrentItems);
+    const previousSummary = summarizeYieldItems(filteredPreviousItems);
+
     return [
       {
         label: "Harvested Batches",
-        value: String(currentData.summary.harvestedBatchCount),
+        value: String(currentSummary.harvestedBatchCount),
         delta: formatDelta(
-          currentData.summary.harvestedBatchCount,
-          previousData.summary.harvestedBatchCount,
+          currentSummary.harvestedBatchCount,
+          previousSummary.harvestedBatchCount,
         ),
       },
       {
         label: "Usable Yield",
-        value: `${currentData.summary.totalUsableWeightKg.toFixed(2)} kg`,
+        value: `${currentSummary.totalUsableWeightKg.toFixed(2)} kg`,
         delta: formatDelta(
-          currentData.summary.totalUsableWeightKg,
-          previousData.summary.totalUsableWeightKg,
+          currentSummary.totalUsableWeightKg,
+          previousSummary.totalUsableWeightKg,
           " kg",
         ),
       },
       {
         label: "Reject Weight",
-        value: `${currentData.summary.totalRejectWeightKg.toFixed(2)} kg`,
+        value: `${currentSummary.totalRejectWeightKg.toFixed(2)} kg`,
         delta: formatDelta(
-          currentData.summary.totalRejectWeightKg,
-          previousData.summary.totalRejectWeightKg,
+          currentSummary.totalRejectWeightKg,
+          previousSummary.totalRejectWeightKg,
           " kg",
         ),
       },
       {
         label: "Average Cycle",
-        value: `${currentData.summary.avgCycleDays.toFixed(2)} days`,
+        value: `${currentSummary.avgCycleDays.toFixed(2)} days`,
         delta: formatDelta(
-          currentData.summary.avgCycleDays,
-          previousData.summary.avgCycleDays,
+          currentSummary.avgCycleDays,
+          previousSummary.avgCycleDays,
           " days",
         ),
       },
       {
         label: "Average Reject Rate",
-        value: `${currentData.summary.avgRejectRatePct.toFixed(2)}%`,
+        value: `${currentSummary.avgRejectRatePct.toFixed(2)}%`,
         delta: formatDelta(
-          currentData.summary.avgRejectRatePct,
-          previousData.summary.avgRejectRatePct,
+          currentSummary.avgRejectRatePct,
+          previousSummary.avgRejectRatePct,
           "%",
         ),
       },
     ];
-  }, [currentData, previousData]);
+  }, [currentData, filteredCurrentItems, filteredPreviousItems, previousData]);
 
   const windowSummary = useMemo(() => {
     if (!currentData || !previousData) {
@@ -222,7 +318,7 @@ export default function YieldDashboardPage() {
       }
     >();
 
-    for (const item of currentData.items) {
+    for (const item of filteredCurrentItems) {
       const key = item.cultivar
         ? `${item.cropName} / ${item.cultivar}`
         : item.cropName;
@@ -243,7 +339,7 @@ export default function YieldDashboardPage() {
       byCrop.set(key, entry);
     }
 
-    for (const item of previousData.items) {
+    for (const item of filteredPreviousItems) {
       const key = item.cultivar
         ? `${item.cropName} / ${item.cultivar}`
         : item.cropName;
@@ -282,7 +378,7 @@ export default function YieldDashboardPage() {
 
     rows.sort((a, b) => b.currentUsable - a.currentUsable);
     return rows;
-  }, [currentData, previousData]);
+  }, [currentData, filteredCurrentItems, filteredPreviousItems, previousData]);
 
   const profileComparisonRows = useMemo(() => {
     if (!currentData || !previousData) {
@@ -304,7 +400,7 @@ export default function YieldDashboardPage() {
       }
     >();
 
-    for (const item of currentData.items) {
+    for (const item of filteredCurrentItems) {
       const key = `${item.cropName}::${item.cultivar ?? ""}::${item.zoneId}`;
       const entry =
         byProfile.get(key) ??
@@ -326,7 +422,7 @@ export default function YieldDashboardPage() {
       byProfile.set(key, entry);
     }
 
-    for (const item of previousData.items) {
+    for (const item of filteredPreviousItems) {
       const key = `${item.cropName}::${item.cultivar ?? ""}::${item.zoneId}`;
       const entry =
         byProfile.get(key) ??
@@ -376,7 +472,7 @@ export default function YieldDashboardPage() {
 
     rows.sort((a, b) => b.usableDelta - a.usableDelta);
     return rows;
-  }, [currentData, previousData]);
+  }, [currentData, filteredCurrentItems, filteredPreviousItems, previousData]);
 
   const topImprovers = useMemo(
     () => profileComparisonRows.filter((row) => row.usableDelta > 0).slice(0, 5),
@@ -407,7 +503,7 @@ export default function YieldDashboardPage() {
       }
     >();
 
-    for (const item of currentData.items) {
+    for (const item of filteredCurrentItems) {
       const entry =
         byZone.get(item.zoneId) ??
         {
@@ -428,7 +524,7 @@ export default function YieldDashboardPage() {
       byZone.set(item.zoneId, entry);
     }
 
-    for (const item of previousData.items) {
+    for (const item of filteredPreviousItems) {
       const entry =
         byZone.get(item.zoneId) ??
         {
@@ -476,7 +572,7 @@ export default function YieldDashboardPage() {
 
     rows.sort((a, b) => b.usableDelta - a.usableDelta);
     return rows;
-  }, [currentData, previousData]);
+  }, [currentData, filteredCurrentItems, filteredPreviousItems, previousData]);
 
   const opsEvidenceRows = useMemo(() => {
     if (!auditEvents.length) {
@@ -511,11 +607,24 @@ export default function YieldDashboardPage() {
       .filter((event) => relevantActions.has(event.action))
       .map<OpsEvidenceRow | null>((event) => {
         const details = event.details;
-        const zoneId = getDetailsString(details, "zoneId");
-        const cropName = getDetailsString(details, "cropName");
-        const cultivar = getDetailsString(details, "cultivar") ?? "";
+        const batchId = getDetailsString(details, "batchId");
+        const matchingItem =
+          batchId !== undefined
+            ? [...filteredCurrentItems, ...filteredPreviousItems].find((item) => item.batchId === batchId)
+            : undefined;
+        const zoneId = getDetailsString(details, "zoneId") ?? matchingItem?.zoneId;
+        const cropName = getDetailsString(details, "cropName") ?? matchingItem?.cropName;
+        const cultivar = getDetailsString(details, "cultivar") ?? matchingItem?.cultivar ?? "";
         const profileKey =
           zoneId && cropName ? `${cropName}::${cultivar}::${zoneId}` : undefined;
+        const catalogSearch = [cropName, cultivar, zoneId]
+          .filter((value) => value && value.trim())
+          .join(" ");
+        const yieldScopeParams = {
+          zone: zoneId,
+          crop: cropName,
+          cultivar,
+        };
 
         const matchesRegressingZone = !!zoneId && regressingZones.has(zoneId);
         const matchesRegressingProfile =
@@ -540,12 +649,15 @@ export default function YieldDashboardPage() {
               detail: `Zone ${zoneId ?? "unknown"}`,
               links: [
                 {
-                  href: "/dashboard",
-                  label: "Open Dashboard",
+                  href: buildScopedHref("/dashboard/yield", yieldScopeParams),
+                  label: "Open Yield Scope",
                 },
                 {
-                  href: "/dashboard/yield",
-                  label: "Open Yield",
+                  href: buildScopedHref("/dashboard/catalog", {
+                    zone: zoneId,
+                    search: catalogSearch,
+                  }),
+                  label: "Open Catalog Scope",
                 },
               ],
             };
@@ -560,12 +672,16 @@ export default function YieldDashboardPage() {
               detail: `Zone ${zoneId ?? "unknown"}`,
               links: [
                 {
-                  href: "/dashboard/catalog",
-                  label: "Open Catalog",
+                  href: buildScopedHref("/dashboard/catalog", {
+                    zone: zoneId,
+                    search: catalogSearch,
+                    assignmentState: event.action === "update-batch-zone-assignment" ? "all" : undefined,
+                  }),
+                  label: "Open Catalog Scope",
                 },
                 {
-                  href: "/dashboard/yield",
-                  label: "Open Yield",
+                  href: buildScopedHref("/dashboard/yield", yieldScopeParams),
+                  label: "Open Yield Scope",
                 },
               ],
             };
@@ -578,12 +694,15 @@ export default function YieldDashboardPage() {
               detail: `${cropName ?? "Crop"}${zoneId ? ` in ${zoneId}` : ""}`,
               links: [
                 {
-                  href: "/dashboard",
-                  label: "Open Dashboard",
+                  href: buildScopedHref("/dashboard/yield", yieldScopeParams),
+                  label: "Open Yield Scope",
                 },
                 {
-                  href: "/dashboard/yield",
-                  label: "Open Yield",
+                  href: buildScopedHref("/dashboard/catalog", {
+                    zone: zoneId,
+                    search: catalogSearch,
+                  }),
+                  label: "Open Catalog Scope",
                 },
               ],
             };
@@ -596,12 +715,14 @@ export default function YieldDashboardPage() {
               detail: "Catalog item fields were updated",
               links: [
                 {
-                  href: "/dashboard/catalog",
-                  label: "Open Catalog",
+                  href: buildScopedHref("/dashboard/catalog", {
+                    search: catalogSearch,
+                  }),
+                  label: "Open Catalog Scope",
                 },
                 {
-                  href: "/dashboard/yield",
-                  label: "Open Yield",
+                  href: buildScopedHref("/dashboard/yield", yieldScopeParams),
+                  label: "Open Yield Scope",
                 },
               ],
             };
@@ -619,12 +740,23 @@ export default function YieldDashboardPage() {
               detail: `Provider: ${provider}`,
               links: [
                 {
-                  href: "/dashboard/integrations",
-                  label: "Open Integrations",
+                  href: buildScopedHref(
+                    "/dashboard/integrations",
+                    {
+                      provider,
+                      delivery: delivered ? "delivered" : "failed",
+                    },
+                    "readiness-log",
+                  ),
+                  label: "Open Integrations Scope",
                 },
                 {
-                  href: "/dashboard/yield",
-                  label: "Open Yield",
+                  href: buildScopedHref("/dashboard/yield", {
+                    zone: scopedZoneId,
+                    crop: scopedCropName,
+                    cultivar: scopedCultivar,
+                  }),
+                  label: "Return to Yield Scope",
                 },
               ],
             };
@@ -647,7 +779,16 @@ export default function YieldDashboardPage() {
       })
       .filter((item): item is OpsEvidenceRow => item !== null)
       .slice(0, 12);
-  }, [auditEvents, topRegressions, zoneTrendRows]);
+  }, [
+    auditEvents,
+    filteredCurrentItems,
+    filteredPreviousItems,
+    scopedCropName,
+    scopedCultivar,
+    scopedZoneId,
+    topRegressions,
+    zoneTrendRows,
+  ]);
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_15%_12%,#e8f9da_0%,#f5fde7_28%,#eef7ff_60%,#f8f1e6_100%)] text-slate-900">
@@ -665,6 +806,9 @@ export default function YieldDashboardPage() {
             <p className="mt-2 text-sm text-slate-600 md:text-base">
               Compare current output against the previous matching window.
             </p>
+            {scopeLabel ? (
+              <p className="mt-2 text-xs text-slate-500">Scoped view: {scopeLabel}</p>
+            ) : null}
             {windowSummary ? (
               <p className="mt-2 text-xs text-slate-500">
                 Current: {windowSummary.current} | Previous: {windowSummary.previous}
@@ -981,7 +1125,7 @@ export default function YieldDashboardPage() {
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold">Batch Yield Details</h2>
             <p className="text-xs uppercase tracking-wide text-slate-500">
-              {isLoading ? "Refreshing..." : `${currentData?.items.length ?? 0} rows`}
+              {isLoading ? "Refreshing..." : `${filteredCurrentItems.length} rows`}
             </p>
           </div>
 
@@ -999,8 +1143,8 @@ export default function YieldDashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {currentData?.items.length ? (
-                  currentData?.items.map((item) => (
+                {filteredCurrentItems.length ? (
+                  filteredCurrentItems.map((item) => (
                     <tr className="rounded-xl bg-white text-sm text-slate-700" key={item.batchId}>
                       <td className="rounded-l-xl px-3 py-2">
                         <p className="font-semibold">{item.batchCode}</p>
@@ -1030,5 +1174,13 @@ export default function YieldDashboardPage() {
         </section>
       </main>
     </div>
+  );
+}
+
+export default function YieldDashboardPage() {
+  return (
+    <Suspense fallback={null}>
+      <YieldDashboardContent />
+    </Suspense>
   );
 }

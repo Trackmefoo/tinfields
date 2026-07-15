@@ -183,6 +183,8 @@ export async function PATCH(
     targetType: "crop_catalog_item",
     targetId: updated.id,
     details: {
+      cropName: updated.cropName,
+      cultivar: updated.cultivar,
       changedFields: Object.keys(payload),
     },
   };
