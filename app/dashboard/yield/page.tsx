@@ -12,9 +12,24 @@ function formatDateTime(iso: string) {
   return date.toLocaleString();
 }
 
+function formatDelta(current: number, previous: number, suffix = "") {
+  const delta = current - previous;
+  const sign = delta > 0 ? "+" : "";
+  return `${sign}${delta.toFixed(2)}${suffix}`;
+}
+
+type CropComparisonRow = {
+  cropKey: string;
+  currentUsable: number;
+  previousUsable: number;
+  currentRejectRate: number;
+  previousRejectRate: number;
+};
+
 export default function YieldDashboardPage() {
   const [windowDays, setWindowDays] = useState(120);
-  const [data, setData] = useState<YieldKpiResponse | null>(null);
+  const [currentData, setCurrentData] = useState<YieldKpiResponse | null>(null);
+  const [previousData, setPreviousData] = useState<YieldKpiResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,17 +39,35 @@ export default function YieldDashboardPage() {
       setError(null);
 
       try {
-        const response = await fetch(`/api/protected/yield-kpi?windowDays=${windowDays}`, {
-          cache: "no-store",
-        });
+        const [currentResponse, previousResponse] = await Promise.all([
+          fetch(`/api/protected/yield-kpi?windowDays=${windowDays}`, {
+            cache: "no-store",
+          }),
+          fetch(
+            `/api/protected/yield-kpi?windowDays=${windowDays}&offsetDays=${windowDays}`,
+            {
+              cache: "no-store",
+            },
+          ),
+        ]);
 
-        if (!response.ok) {
-          const body: { error?: string } = await response.json().catch(() => ({}));
+        if (!currentResponse.ok || !previousResponse.ok) {
+          const failedResponse = !currentResponse.ok
+            ? currentResponse
+            : previousResponse;
+          const body: { error?: string } = await failedResponse
+            .json()
+            .catch(() => ({}));
           throw new Error(body.error ?? "Unable to load yield KPIs.");
         }
 
-        const payload: YieldKpiResponse = await response.json();
-        setData(payload);
+        const [currentPayload, previousPayload] = (await Promise.all([
+          currentResponse.json(),
+          previousResponse.json(),
+        ])) as [YieldKpiResponse, YieldKpiResponse];
+
+        setCurrentData(currentPayload);
+        setPreviousData(previousPayload);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Unable to load yield KPIs.");
       } finally {
@@ -46,33 +79,151 @@ export default function YieldDashboardPage() {
   }, [windowDays]);
 
   const cards = useMemo(() => {
-    if (!data) {
+    if (!currentData || !previousData) {
       return [];
     }
 
     return [
       {
         label: "Harvested Batches",
-        value: String(data.summary.harvestedBatchCount),
+        value: String(currentData.summary.harvestedBatchCount),
+        delta: formatDelta(
+          currentData.summary.harvestedBatchCount,
+          previousData.summary.harvestedBatchCount,
+        ),
       },
       {
         label: "Usable Yield",
-        value: `${data.summary.totalUsableWeightKg.toFixed(2)} kg`,
+        value: `${currentData.summary.totalUsableWeightKg.toFixed(2)} kg`,
+        delta: formatDelta(
+          currentData.summary.totalUsableWeightKg,
+          previousData.summary.totalUsableWeightKg,
+          " kg",
+        ),
       },
       {
         label: "Reject Weight",
-        value: `${data.summary.totalRejectWeightKg.toFixed(2)} kg`,
+        value: `${currentData.summary.totalRejectWeightKg.toFixed(2)} kg`,
+        delta: formatDelta(
+          currentData.summary.totalRejectWeightKg,
+          previousData.summary.totalRejectWeightKg,
+          " kg",
+        ),
       },
       {
         label: "Average Cycle",
-        value: `${data.summary.avgCycleDays.toFixed(2)} days`,
+        value: `${currentData.summary.avgCycleDays.toFixed(2)} days`,
+        delta: formatDelta(
+          currentData.summary.avgCycleDays,
+          previousData.summary.avgCycleDays,
+          " days",
+        ),
       },
       {
         label: "Average Reject Rate",
-        value: `${data.summary.avgRejectRatePct.toFixed(2)}%`,
+        value: `${currentData.summary.avgRejectRatePct.toFixed(2)}%`,
+        delta: formatDelta(
+          currentData.summary.avgRejectRatePct,
+          previousData.summary.avgRejectRatePct,
+          "%",
+        ),
       },
     ];
-  }, [data]);
+  }, [currentData, previousData]);
+
+  const windowSummary = useMemo(() => {
+    if (!currentData || !previousData) {
+      return null;
+    }
+
+    return {
+      current: `${formatDateTime(currentData.windowStart)} - ${formatDateTime(
+        currentData.windowEnd,
+      )}`,
+      previous: `${formatDateTime(previousData.windowStart)} - ${formatDateTime(
+        previousData.windowEnd,
+      )}`,
+    };
+  }, [currentData, previousData]);
+
+  const cropComparisonRows = useMemo(() => {
+    if (!currentData || !previousData) {
+      return [];
+    }
+
+    const byCrop = new Map<
+      string,
+      {
+        currentUsable: number;
+        currentReject: number;
+        currentTotal: number;
+        previousUsable: number;
+        previousReject: number;
+        previousTotal: number;
+      }
+    >();
+
+    for (const item of currentData.items) {
+      const key = item.cultivar
+        ? `${item.cropName} / ${item.cultivar}`
+        : item.cropName;
+      const entry =
+        byCrop.get(key) ??
+        {
+          currentUsable: 0,
+          currentReject: 0,
+          currentTotal: 0,
+          previousUsable: 0,
+          previousReject: 0,
+          previousTotal: 0,
+        };
+
+      entry.currentUsable += item.usableWeightKg;
+      entry.currentReject += item.rejectWeightKg;
+      entry.currentTotal += item.usableWeightKg + item.rejectWeightKg;
+      byCrop.set(key, entry);
+    }
+
+    for (const item of previousData.items) {
+      const key = item.cultivar
+        ? `${item.cropName} / ${item.cultivar}`
+        : item.cropName;
+      const entry =
+        byCrop.get(key) ??
+        {
+          currentUsable: 0,
+          currentReject: 0,
+          currentTotal: 0,
+          previousUsable: 0,
+          previousReject: 0,
+          previousTotal: 0,
+        };
+
+      entry.previousUsable += item.usableWeightKg;
+      entry.previousReject += item.rejectWeightKg;
+      entry.previousTotal += item.usableWeightKg + item.rejectWeightKg;
+      byCrop.set(key, entry);
+    }
+
+    const rows: CropComparisonRow[] = Array.from(byCrop.entries()).map(
+      ([cropKey, value]) => ({
+        cropKey,
+        currentUsable: value.currentUsable,
+        previousUsable: value.previousUsable,
+        currentRejectRate:
+          value.currentTotal > 0
+            ? (value.currentReject / value.currentTotal) * 100
+            : 0,
+        previousRejectRate:
+          value.previousTotal > 0
+            ? (value.previousReject / value.previousTotal) * 100
+            : 0,
+      }),
+    );
+
+    rows.sort((a, b) => b.currentUsable - a.currentUsable);
+    return rows;
+  }, [currentData, previousData]);
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_15%_12%,#e8f9da_0%,#f5fde7_28%,#eef7ff_60%,#f8f1e6_100%)] text-slate-900">
@@ -88,8 +239,13 @@ export default function YieldDashboardPage() {
               Crop Performance Window
             </h1>
             <p className="mt-2 text-sm text-slate-600 md:text-base">
-              Compare batch output and reject rates over rolling harvest windows.
+              Compare current output against the previous matching window.
             </p>
+            {windowSummary ? (
+              <p className="mt-2 text-xs text-slate-500">
+                Current: {windowSummary.current} | Previous: {windowSummary.previous}
+              </p>
+            ) : null}
           </div>
           <div className="flex items-center gap-3">
             <label className="text-sm font-medium text-slate-700" htmlFor="windowDays">
@@ -130,6 +286,9 @@ export default function YieldDashboardPage() {
             >
               <p className="text-xs uppercase tracking-wide text-slate-500">{card.label}</p>
               <p className="mt-2 text-2xl font-bold text-slate-800">{card.value}</p>
+              <p className="mt-1 text-xs text-slate-500">
+                vs prior window: <span className="font-semibold text-slate-700">{card.delta}</span>
+              </p>
             </article>
           ))}
           {isLoading && cards.length === 0 ? (
@@ -141,9 +300,55 @@ export default function YieldDashboardPage() {
 
         <section className="rounded-3xl border border-white/60 bg-white/75 p-6 shadow-[0_18px_40px_-26px_rgba(15,23,42,.5)] backdrop-blur-sm">
           <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">Crop Comparison</h2>
+            <p className="text-xs uppercase tracking-wide text-slate-500">
+              {isLoading ? "Refreshing..." : `${cropComparisonRows.length} crops`}
+            </p>
+          </div>
+
+          <div className="mt-4 overflow-x-auto">
+            <table className="min-w-full border-separate border-spacing-y-2">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
+                  <th className="px-3 py-2">Crop</th>
+                  <th className="px-3 py-2">Usable (Current)</th>
+                  <th className="px-3 py-2">Usable (Previous)</th>
+                  <th className="px-3 py-2">Delta</th>
+                  <th className="px-3 py-2">Reject % (Current)</th>
+                  <th className="px-3 py-2">Reject % (Previous)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cropComparisonRows.length ? (
+                  cropComparisonRows.map((row) => (
+                    <tr className="rounded-xl bg-white text-sm text-slate-700" key={row.cropKey}>
+                      <td className="rounded-l-xl px-3 py-2 font-medium">{row.cropKey}</td>
+                      <td className="px-3 py-2">{row.currentUsable.toFixed(2)}</td>
+                      <td className="px-3 py-2">{row.previousUsable.toFixed(2)}</td>
+                      <td className="px-3 py-2">
+                        {formatDelta(row.currentUsable, row.previousUsable, " kg")}
+                      </td>
+                      <td className="px-3 py-2">{row.currentRejectRate.toFixed(2)}%</td>
+                      <td className="rounded-r-xl px-3 py-2">{row.previousRejectRate.toFixed(2)}%</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td className="px-3 py-4 text-sm text-slate-600" colSpan={6}>
+                      No crop-level comparison data yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-white/60 bg-white/75 p-6 shadow-[0_18px_40px_-26px_rgba(15,23,42,.5)] backdrop-blur-sm">
+          <div className="flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold">Batch Yield Details</h2>
             <p className="text-xs uppercase tracking-wide text-slate-500">
-              {isLoading ? "Refreshing..." : `${data?.items.length ?? 0} rows`}
+              {isLoading ? "Refreshing..." : `${currentData?.items.length ?? 0} rows`}
             </p>
           </div>
 
@@ -161,8 +366,8 @@ export default function YieldDashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {data?.items.length ? (
-                  data.items.map((item) => (
+                {currentData?.items.length ? (
+                  currentData?.items.map((item) => (
                     <tr className="rounded-xl bg-white text-sm text-slate-700" key={item.batchId}>
                       <td className="rounded-l-xl px-3 py-2">
                         <p className="font-semibold">{item.batchCode}</p>

@@ -134,6 +134,8 @@ export interface YieldKpiSummary {
 
 export interface YieldKpiResponse {
   windowDays: number;
+  windowStart: string;
+  windowEnd: string;
   generatedAt: string;
   summary: YieldKpiSummary;
   items: YieldKpiItem[];

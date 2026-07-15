@@ -4,6 +4,7 @@ import { extractRoleFromClaims, hasRequiredRole } from "@/lib/authz";
 import type { YieldKpiItem, YieldKpiResponse } from "@/types";
 
 const WINDOW_DAYS_QUERY = "windowDays";
+const OFFSET_DAYS_QUERY = "offsetDays";
 
 function parseWindowDays(rawValue: string | null) {
   if (!rawValue) {
@@ -16,6 +17,19 @@ function parseWindowDays(rawValue: string | null) {
   }
 
   return Math.max(7, Math.min(Math.floor(parsed), 730));
+}
+
+function parseOffsetDays(rawValue: string | null) {
+  if (!rawValue) {
+    return 0;
+  }
+
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(Math.floor(parsed), 3650));
 }
 
 function toFixedNumber(value: number) {
@@ -42,15 +56,20 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const windowDays = parseWindowDays(url.searchParams.get(WINDOW_DAYS_QUERY));
+  const offsetDays = parseOffsetDays(url.searchParams.get(OFFSET_DAYS_QUERY));
   const now = new Date();
-  const since = new Date(now.getTime() - windowDays * 24 * 60 * 60 * 1000);
+  const windowEnd = new Date(now.getTime() - offsetDays * 24 * 60 * 60 * 1000);
+  const windowStart = new Date(
+    windowEnd.getTime() - windowDays * 24 * 60 * 60 * 1000,
+  );
 
   const rows = await prisma.plantingBatch.findMany({
     where: {
       harvests: {
         some: {
           harvestedAt: {
-            gte: since,
+            gte: windowStart,
+            lt: windowEnd,
           },
         },
       },
@@ -59,7 +78,8 @@ export async function GET(request: Request) {
       harvests: {
         where: {
           harvestedAt: {
-            gte: since,
+            gte: windowStart,
+            lt: windowEnd,
           },
         },
         orderBy: {
@@ -137,6 +157,8 @@ export async function GET(request: Request) {
 
   const response: YieldKpiResponse = {
     windowDays,
+    windowStart: windowStart.toISOString(),
+    windowEnd: windowEnd.toISOString(),
     generatedAt: now.toISOString(),
     summary: {
       harvestedBatchCount,
