@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 type ApprovalRole = "operator" | "grow_manager" | "admin";
+type ManagedRole = ApprovalRole | "pending";
+type AccessActivityAction = "approved" | "revoked" | "role_changed";
+type ActivityFilter = "all" | AccessActivityAction;
 
 type UserApprovalItem = {
   id: string;
@@ -11,26 +14,57 @@ type UserApprovalItem = {
   fullName: string;
   createdAt: string;
   lastSignInAt?: string;
-  role: ApprovalRole | "pending";
+  role: ManagedRole;
 };
 
 type ApprovalAuditItem = {
   id: string;
   createdAt: string;
+  action: AccessActivityAction;
   actorUserId: string;
   actorRole: ApprovalRole;
-  approvedUserId?: string;
-  approvedRole?: ApprovalRole;
+  actorDisplayName?: string;
+  actorEmail?: string;
+  targetUserId?: string;
+  targetDisplayName?: string;
+  targetEmail?: string;
+  previousRole?: ManagedRole;
+  role?: ManagedRole;
+};
+
+type ActivityPayload = {
+  items?: ApprovalAuditItem[];
+  page?: number;
+  pageSize?: number;
+  total?: number;
+  totalPages?: number;
+  filter?: {
+    action?: ActivityFilter;
+    actorUserId?: string;
+    targetUserId?: string;
+  };
 };
 
 type ApprovalListResponse = {
   items?: UserApprovalItem[];
   approvedUsers?: UserApprovalItem[];
-  recentApprovalEvents?: ApprovalAuditItem[];
+  activity?: ActivityPayload;
   approvedRoles?: ApprovalRole[];
   totalUsers?: number;
   error?: string;
 };
+
+type RoleUpdateResponse = {
+  ok?: boolean;
+  previousRole?: ManagedRole;
+  role?: ManagedRole;
+  action?: AccessActivityAction;
+  error?: string;
+};
+
+const DEFAULT_ROLES: ApprovalRole[] = ["operator", "grow_manager", "admin"];
+const DEFAULT_ACTIVITY_PAGE = 1;
+const DEFAULT_ACTIVITY_PAGE_SIZE = 10;
 
 function formatDateTime(iso: string) {
   const date = new Date(iso);
@@ -44,40 +78,116 @@ function isApprovalRole(value: unknown): value is ApprovalRole {
   return value === "operator" || value === "grow_manager" || value === "admin";
 }
 
+function isActivityFilter(value: unknown): value is ActivityFilter {
+  return value === "all" || value === "approved" || value === "revoked" || value === "role_changed";
+}
+
 function normalizeRoles(value: unknown): ApprovalRole[] {
   if (!Array.isArray(value)) {
-    return ["operator", "grow_manager", "admin"];
+    return DEFAULT_ROLES;
   }
 
   const parsed = value.filter(isApprovalRole);
   if (parsed.length === 0) {
-    return ["operator", "grow_manager", "admin"];
+    return DEFAULT_ROLES;
   }
 
   return parsed;
+}
+
+function toTitleCaseAction(action: AccessActivityAction) {
+  if (action === "role_changed") {
+    return "Role Changed";
+  }
+
+  return action.charAt(0).toUpperCase() + action.slice(1);
+}
+
+function roleLabel(role: ManagedRole | undefined) {
+  if (!role) {
+    return "Unknown";
+  }
+
+  return role === "grow_manager" ? "Grow Manager" : role.charAt(0).toUpperCase() + role.slice(1);
 }
 
 export default function AccessApprovalPage() {
   const [pendingUsers, setPendingUsers] = useState<UserApprovalItem[]>([]);
   const [approvedUsers, setApprovedUsers] = useState<UserApprovalItem[]>([]);
   const [approvalEvents, setApprovalEvents] = useState<ApprovalAuditItem[]>([]);
-  const [approvedRoles, setApprovedRoles] = useState<ApprovalRole[]>([
-    "operator",
-    "grow_manager",
-    "admin",
-  ]);
-  const [selectedRoles, setSelectedRoles] = useState<Record<string, ApprovalRole>>({});
+  const [approvedRoles, setApprovedRoles] = useState<ApprovalRole[]>(DEFAULT_ROLES);
+  const [selectedRoles, setSelectedRoles] = useState<Record<string, ManagedRole>>({});
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activityFilter, setActivityFilter] = useState<ActivityFilter>("all");
+  const [activityPage, setActivityPage] = useState(DEFAULT_ACTIVITY_PAGE);
+  const [activityPageSize, setActivityPageSize] = useState(DEFAULT_ACTIVITY_PAGE_SIZE);
+  const [activityTotal, setActivityTotal] = useState(0);
+  const [activityTotalPages, setActivityTotalPages] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
   const [activeUserId, setActiveUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  async function loadUsers() {
+  function applyServerPayload(payload: ApprovalListResponse) {
+    const pending = Array.isArray(payload.items) ? payload.items : [];
+    const approved = Array.isArray(payload.approvedUsers) ? payload.approvedUsers : [];
+    const roles = normalizeRoles(payload.approvedRoles);
+    const activity = payload.activity;
+    const activityItems = Array.isArray(activity?.items) ? activity.items : [];
+    const nextActivityFilter = isActivityFilter(activity?.filter?.action)
+      ? activity.filter.action
+      : activityFilter;
+
+    setPendingUsers(pending);
+    setApprovedUsers(approved);
+    setApprovedRoles(roles);
+    setApprovalEvents(activityItems);
+    setActivityFilter(nextActivityFilter);
+    setActivityPage(typeof activity?.page === "number" ? activity.page : DEFAULT_ACTIVITY_PAGE);
+    setActivityPageSize(
+      typeof activity?.pageSize === "number" ? activity.pageSize : DEFAULT_ACTIVITY_PAGE_SIZE,
+    );
+    setActivityTotal(typeof activity?.total === "number" ? activity.total : 0);
+    setActivityTotalPages(typeof activity?.totalPages === "number" ? activity.totalPages : 1);
+
+    setSelectedRoles((current) => {
+      const next = { ...current };
+      pending.forEach((user) => {
+        if (!next[user.id] || next[user.id] === "pending") {
+          next[user.id] = "operator";
+        }
+      });
+      approved.forEach((user) => {
+        if (!next[user.id]) {
+          next[user.id] = user.role;
+        }
+      });
+      return next;
+    });
+  }
+
+  async function loadUsers(options?: {
+    activityFilter?: ActivityFilter;
+    activityPage?: number;
+    searchQuery?: string;
+  }) {
+    const nextFilter = options?.activityFilter ?? activityFilter;
+    const nextPage = options?.activityPage ?? activityPage;
+    const nextSearch = options?.searchQuery ?? searchQuery;
+
     setIsLoading(true);
     setError(null);
 
     try {
-      const response = await fetch("/api/protected/admin/user-approvals", {
+      const params = new URLSearchParams();
+      if (nextSearch.trim()) {
+        params.set("search", nextSearch.trim());
+      }
+      params.set("activityAction", nextFilter);
+      params.set("activityPage", String(nextPage));
+      params.set("activityPageSize", String(activityPageSize));
+
+      const response = await fetch(`/api/protected/admin/user-approvals?${params.toString()}`, {
         cache: "no-store",
       });
 
@@ -86,25 +196,7 @@ export default function AccessApprovalPage() {
         throw new Error(payload.error ?? "Unable to load approval queue.");
       }
 
-      const pending = Array.isArray(payload.items) ? payload.items : [];
-      const approved = Array.isArray(payload.approvedUsers) ? payload.approvedUsers : [];
-      const events = Array.isArray(payload.recentApprovalEvents) ? payload.recentApprovalEvents : [];
-      const roles = normalizeRoles(payload.approvedRoles);
-
-      setPendingUsers(pending);
-      setApprovedUsers(approved);
-      setApprovalEvents(events);
-      setApprovedRoles(roles);
-
-      setSelectedRoles((current) => {
-        const next = { ...current };
-        pending.forEach((user) => {
-          if (!next[user.id]) {
-            next[user.id] = "operator";
-          }
-        });
-        return next;
-      });
+      applyServerPayload(payload);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load approval queue.");
     } finally {
@@ -114,50 +206,18 @@ export default function AccessApprovalPage() {
 
   useEffect(() => {
     async function initialLoad() {
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const response = await fetch("/api/protected/admin/user-approvals", {
-          cache: "no-store",
-        });
-
-        const payload: ApprovalListResponse = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(payload.error ?? "Unable to load approval queue.");
-        }
-
-        const pending = Array.isArray(payload.items) ? payload.items : [];
-        const approved = Array.isArray(payload.approvedUsers) ? payload.approvedUsers : [];
-        const events = Array.isArray(payload.recentApprovalEvents) ? payload.recentApprovalEvents : [];
-        const roles = normalizeRoles(payload.approvedRoles);
-
-        setPendingUsers(pending);
-        setApprovedUsers(approved);
-        setApprovalEvents(events);
-        setApprovedRoles(roles);
-
-        setSelectedRoles((current) => {
-          const next = { ...current };
-          pending.forEach((user) => {
-            if (!next[user.id]) {
-              next[user.id] = "operator";
-            }
-          });
-          return next;
-        });
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Unable to load approval queue.");
-      } finally {
-        setIsLoading(false);
-      }
+      await loadUsers({
+        activityFilter: "all",
+        activityPage: DEFAULT_ACTIVITY_PAGE,
+      });
     }
 
     void initialLoad();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function approveUser(userId: string) {
-    const role = selectedRoles[userId] ?? "operator";
+  async function updateUserRole(userId: string, fallbackRole: ManagedRole) {
+    const role = selectedRoles[userId] ?? fallbackRole;
 
     setActiveUserId(userId);
     setError(null);
@@ -175,15 +235,22 @@ export default function AccessApprovalPage() {
         }),
       });
 
-      const payload: { error?: string } = await response.json().catch(() => ({}));
+      const payload: RoleUpdateResponse = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(payload.error ?? "Unable to approve user.");
       }
 
-      setSuccess(`User approved as ${role}.`);
+      if (payload.action === "revoked") {
+        setSuccess("User access revoked and moved to pending.");
+      } else if (payload.action === "role_changed") {
+        setSuccess(`User role changed from ${roleLabel(payload.previousRole)} to ${roleLabel(payload.role)}.`);
+      } else {
+        setSuccess(`User approved as ${roleLabel(payload.role)}.`);
+      }
+
       await loadUsers();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to approve user.");
+      setError(err instanceof Error ? err.message : "Unable to update user role.");
     } finally {
       setActiveUserId(null);
     }
@@ -197,6 +264,21 @@ export default function AccessApprovalPage() {
       .sort((a, b) => a.fullName.localeCompare(b.fullName))
       .slice(0, 12);
   }, [approvedUsers]);
+
+  const activityRangeStart = activityTotal === 0 ? 0 : (activityPage - 1) * activityPageSize + 1;
+  const activityRangeEnd = Math.min(activityPage * activityPageSize, activityTotal);
+
+  function getActivityExportHref() {
+    const params = new URLSearchParams();
+    if (searchQuery.trim()) {
+      params.set("search", searchQuery.trim());
+    }
+    params.set("activityAction", activityFilter);
+    params.set("activityPage", String(activityPage));
+    params.set("activityPageSize", String(activityPageSize));
+    params.set("activityFormat", "csv");
+    return `/api/protected/admin/user-approvals?${params.toString()}`;
+  }
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_16%_10%,#f4fbe7_0%,#eef8ff_36%,#f9f1e7_68%,#fefefe_100%)] text-slate-900">
@@ -216,6 +298,22 @@ export default function AccessApprovalPage() {
             </p>
           </div>
           <div className="flex items-center gap-3">
+            <input
+              className="w-56 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search users"
+              value={searchQuery}
+            />
+            <button
+              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100"
+              disabled={isLoading}
+              onClick={() => {
+                void loadUsers({ activityPage: DEFAULT_ACTIVITY_PAGE });
+              }}
+              type="button"
+            >
+              Apply Filters
+            </button>
             <button
               className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100"
               disabled={isLoading}
@@ -300,7 +398,7 @@ export default function AccessApprovalPage() {
                       className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-white disabled:cursor-not-allowed disabled:bg-emerald-300"
                       disabled={activeUserId === user.id}
                       onClick={() => {
-                        void approveUser(user.id);
+                        void updateUserRole(user.id, "operator");
                       }}
                       type="button"
                     >
@@ -333,6 +431,38 @@ export default function AccessApprovalPage() {
                     {user.fullName} - <span className="uppercase">{user.role}</span>
                   </p>
                   <p className="text-xs text-slate-500">{user.email}</p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <select
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700"
+                      onChange={(event) =>
+                        setSelectedRoles((current) => ({
+                          ...current,
+                          [user.id]: event.target.value as ManagedRole,
+                        }))
+                      }
+                      value={selectedRoles[user.id] ?? user.role}
+                    >
+                      <option value="pending">pending</option>
+                      {approvedRoles.map((role) => (
+                        <option key={role} value={role}>
+                          {role}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+                      disabled={
+                        activeUserId === user.id ||
+                        (selectedRoles[user.id] ?? user.role) === user.role
+                      }
+                      onClick={() => {
+                        void updateUserRole(user.id, user.role);
+                      }}
+                      type="button"
+                    >
+                      {(selectedRoles[user.id] ?? user.role) === "pending" ? "Revoke Access" : "Update Role"}
+                    </button>
+                  </div>
                 </div>
               ))
             )}
@@ -342,9 +472,33 @@ export default function AccessApprovalPage() {
         <section className="rounded-3xl border border-white/60 bg-white/75 p-6 shadow-[0_18px_40px_-26px_rgba(15,23,42,.5)] backdrop-blur-sm">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold">Recent Approval Activity</h2>
-            <span className="text-xs uppercase tracking-wide text-slate-500">
-              {isLoading ? "Loading..." : `${approvalEvents.length} shown`}
-            </span>
+            <div className="flex items-center gap-2">
+              <a
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700 hover:bg-slate-50"
+                href={getActivityExportHref()}
+                rel="noreferrer"
+                target="_blank"
+              >
+                Export CSV
+              </a>
+              <select
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700"
+                onChange={(event) => {
+                  const nextFilter = event.target.value as ActivityFilter;
+                  setActivityFilter(nextFilter);
+                  void loadUsers({ activityFilter: nextFilter, activityPage: DEFAULT_ACTIVITY_PAGE });
+                }}
+                value={activityFilter}
+              >
+                <option value="all">all</option>
+                <option value="approved">approved</option>
+                <option value="revoked">revoked</option>
+                <option value="role_changed">role changed</option>
+              </select>
+              <span className="text-xs uppercase tracking-wide text-slate-500">
+                {isLoading ? "Loading..." : `${activityRangeStart}-${activityRangeEnd} of ${activityTotal}`}
+              </span>
+            </div>
           </div>
 
           <div className="mt-4 space-y-2">
@@ -356,15 +510,50 @@ export default function AccessApprovalPage() {
               approvalEvents.map((event) => (
                 <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700" key={event.id}>
                   <p className="font-medium">
-                    {event.approvedUserId ?? "Unknown user"} approved as{" "}
-                    <span className="uppercase">{event.approvedRole ?? "operator"}</span>
+                    <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-700">
+                      {toTitleCaseAction(event.action)}
+                    </span>{" "}
+                    {event.targetDisplayName ?? event.targetUserId ?? "Unknown user"} -{" "}
+                    <span className="uppercase">{roleLabel(event.role)}</span>
                   </p>
                   <p className="text-xs text-slate-500">
-                    By {event.actorUserId} ({event.actorRole}) at {formatDateTime(event.createdAt)}
+                    By {event.actorDisplayName ?? event.actorUserId} ({event.actorRole}) at {formatDateTime(event.createdAt)}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    {event.targetEmail ?? "No target email"} | {event.actorEmail ?? "No actor email"}
+                    {event.previousRole ? ` | from ${roleLabel(event.previousRole)}` : ""}
                   </p>
                 </div>
               ))
             )}
+          </div>
+
+          <div className="mt-4 flex items-center justify-end gap-2">
+            <button
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700 disabled:cursor-not-allowed disabled:bg-slate-100"
+              disabled={isLoading || activityPage <= 1}
+              onClick={() => {
+                const nextPage = Math.max(1, activityPage - 1);
+                setActivityPage(nextPage);
+                void loadUsers({ activityPage: nextPage });
+              }}
+              type="button"
+            >
+              Previous
+            </button>
+            <span className="text-xs text-slate-500">Page {activityPage} of {activityTotalPages}</span>
+            <button
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700 disabled:cursor-not-allowed disabled:bg-slate-100"
+              disabled={isLoading || activityPage >= activityTotalPages}
+              onClick={() => {
+                const nextPage = Math.min(activityTotalPages, activityPage + 1);
+                setActivityPage(nextPage);
+                void loadUsers({ activityPage: nextPage });
+              }}
+              type="button"
+            >
+              Next
+            </button>
           </div>
         </section>
       </main>
