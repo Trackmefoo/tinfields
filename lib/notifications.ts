@@ -1,0 +1,92 @@
+import type { MessagingReadinessStatus } from "@/types";
+
+type NotificationResult = {
+  provider: "resend" | "fallback";
+  delivered: boolean;
+  usedFallback: boolean;
+  error?: string;
+};
+
+function hasValue(value: string | undefined) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function getMessagingConfig() {
+  const resendApiKey = process.env.RESEND_API_KEY;
+  const alertFromEmail = process.env.ALERT_FROM_EMAIL;
+  const alertToEmail = process.env.ALERT_TO_EMAIL;
+
+  return {
+    resendApiKey,
+    alertFromEmail,
+    alertToEmail,
+  };
+}
+
+export function getMessagingReadinessStatus(): MessagingReadinessStatus {
+  const { resendApiKey, alertFromEmail, alertToEmail } = getMessagingConfig();
+
+  const providerConfigured = hasValue(resendApiKey);
+  const fromConfigured = hasValue(alertFromEmail);
+  const toConfigured = hasValue(alertToEmail);
+
+  return {
+    provider: providerConfigured ? "resend" : "fallback",
+    providerConfigured,
+    fromConfigured,
+    toConfigured,
+    healthy: providerConfigured && fromConfigured && toConfigured,
+  };
+}
+
+export async function sendTestAlertNotification(message: string): Promise<NotificationResult> {
+  const { resendApiKey, alertFromEmail, alertToEmail } = getMessagingConfig();
+
+  if (!hasValue(resendApiKey) || !hasValue(alertFromEmail) || !hasValue(alertToEmail)) {
+    return {
+      provider: "fallback",
+      delivered: true,
+      usedFallback: true,
+      error: "Primary provider is not fully configured; fallback path used.",
+    };
+  }
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: alertFromEmail,
+        to: [alertToEmail],
+        subject: "TinFields Alert Test",
+        text: message,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return {
+        provider: "fallback",
+        delivered: true,
+        usedFallback: true,
+        error: `Primary provider request failed (${response.status}): ${errorText.slice(0, 200)}`,
+      };
+    }
+
+    return {
+      provider: "resend",
+      delivered: true,
+      usedFallback: false,
+    };
+  } catch (error) {
+    return {
+      provider: "fallback",
+      delivered: true,
+      usedFallback: true,
+      error: error instanceof Error ? error.message : "Unknown notification error",
+    };
+  }
+}

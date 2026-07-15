@@ -1,0 +1,130 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum AppRole {
+  operator
+  grow_manager
+  admin
+}
+
+enum AuditEventType {
+  command
+  planting
+  harvest
+}
+
+enum CropBatchStatus {
+  planned
+  active
+  harvested
+  archived
+}
+
+enum QualityGrade {
+  A
+  B
+  C
+  reject
+}
+
+model AuditEvent {
+  id         String         @id
+  actorUserId String
+  role       AppRole
+  eventType  AuditEventType
+  action     String
+  targetType String
+  targetId   String?
+  details    Json?
+  createdAt  DateTime
+
+  @@index([createdAt])
+  @@index([actorUserId])
+}
+
+model PlantingBatch {
+  id                     String          @id
+  batchCode              String          @unique
+  cropCatalogId          String?
+  cropName               String
+  cultivar               String?
+  zoneId                 String
+  plantedAt              DateTime
+  expectedHarvestStartAt DateTime?
+  expectedHarvestEndAt   DateTime?
+  status                 CropBatchStatus
+  startedByUserId        String
+  createdAt              DateTime
+  updatedAt              DateTime
+
+  cropCatalog CropCatalogItem?     @relation(fields: [cropCatalogId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  harvests HarvestRecord[]
+  zoneAssignments BatchZoneAssignment[]
+
+  @@index([createdAt])
+  @@index([cropCatalogId])
+  @@index([zoneId])
+}
+
+model CropCatalogItem {
+  id             String   @id
+  cropName       String
+  cultivar       String?
+  seedSupplier   String?
+  seedLotCode    String?
+  targetCycleDays Int?
+  notes          String?
+  createdAt      DateTime
+  updatedAt      DateTime
+
+  batches PlantingBatch[]
+
+  @@index([createdAt])
+  @@index([cropName])
+}
+
+model BatchZoneAssignment {
+  id               String   @id
+  batchId          String
+  zoneId           String
+  assignedAt       DateTime
+  unassignedAt     DateTime?
+  assignmentReason String?
+  createdAt        DateTime
+
+  batch PlantingBatch @relation(fields: [batchId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([batchId])
+  @@index([assignedAt])
+  @@index([zoneId])
+}
+
+model HarvestRecord {
+  id             String   @id
+  batchId        String
+  zoneId         String
+  harvestedAt    DateTime
+  operatorUserId String
+  usableWeightKg Float
+  rejectWeightKg Float
+  wetWeightKg    Float?
+  dryWeightKg    Float?
+  qualityGrade   QualityGrade?
+  defectNotes    String?
+  finalized      Boolean  @default(false)
+  finalizedAt    DateTime?
+  notes          String?
+  createdAt      DateTime
+
+  batch PlantingBatch @relation(fields: [batchId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([batchId])
+  @@index([createdAt])
+  @@index([zoneId])
+}
