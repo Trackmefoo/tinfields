@@ -1,5 +1,6 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { appendAuditEvent, listAuditEvents } from "@/lib/audit-store";
+import { sendAccessChangeNotification } from "@/lib/notifications";
 import { extractRoleFromClaims, hasRequiredRole, requireApprovedRole, type ApprovedRole } from "@/lib/authz";
 import type { StoredAuditEvent } from "@/types";
 
@@ -50,6 +51,10 @@ type ApprovalActivityResponse = {
 type UserIdentity = {
   fullName: string;
   email: string;
+};
+
+type NotificationIdentity = UserIdentity & {
+  id: string;
 };
 
 type ClerkEmailAddress = {
@@ -255,6 +260,22 @@ async function resolveUserIdentities(userIds: string[]): Promise<Record<string, 
   });
 
   return resolved;
+}
+
+async function resolveUserIdentity(userId: string): Promise<NotificationIdentity | null> {
+  const client = await clerkClient();
+
+  try {
+    const user = await client.users.getUser(userId);
+    const userItem = toUserApprovalItem(user as unknown as ClerkUserLike);
+    return {
+      id: userItem.id,
+      fullName: userItem.fullName,
+      email: userItem.email,
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function buildActivityResponse(requestUrl: string): Promise<ApprovalActivityResponse> {
@@ -489,6 +510,30 @@ export async function PATCH(request: Request) {
     },
   };
   await appendAuditEvent(auditEvent);
+
+  const [actorIdentity, targetIdentity] = await Promise.all([
+    resolveUserIdentity(session.userId),
+    resolveUserIdentity(payload.userId),
+  ]);
+
+  if (actorIdentity && targetIdentity) {
+    await sendAccessChangeNotification({
+      action:
+        action === APPROVAL_AUDIT_ACTION
+          ? "approved"
+          : action === REVOKE_AUDIT_ACTION
+            ? "revoked"
+            : "role_changed",
+      targetDisplayName: targetIdentity.fullName,
+      targetEmail: targetIdentity.email,
+      targetUserId: targetIdentity.id,
+      previousRole,
+      nextRole: payload.role,
+      actorDisplayName: actorIdentity.fullName,
+      actorEmail: actorIdentity.email,
+      actorUserId: actorIdentity.id,
+    });
+  }
 
   return Response.json({
     ok: true,

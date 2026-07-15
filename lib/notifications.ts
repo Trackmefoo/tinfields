@@ -1,5 +1,17 @@
 import type { MessagingReadinessStatus } from "@/types";
 
+type AccessChangeNotification = {
+  action: "approved" | "revoked" | "role_changed";
+  targetDisplayName: string;
+  targetEmail: string;
+  targetUserId: string;
+  previousRole?: string;
+  nextRole?: string;
+  actorDisplayName: string;
+  actorEmail: string;
+  actorUserId: string;
+};
+
 type NotificationResult = {
   provider: "resend" | "fallback";
   delivered: boolean;
@@ -63,6 +75,74 @@ export async function sendTestAlertNotification(message: string): Promise<Notifi
         to: [alertToEmail],
         subject: "TinFields Alert Test",
         text: message,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return {
+        provider: "fallback",
+        delivered: true,
+        usedFallback: true,
+        error: `Primary provider request failed (${response.status}): ${errorText.slice(0, 200)}`,
+      };
+    }
+
+    return {
+      provider: "resend",
+      delivered: true,
+      usedFallback: false,
+    };
+  } catch (error) {
+    return {
+      provider: "fallback",
+      delivered: true,
+      usedFallback: true,
+      error: error instanceof Error ? error.message : "Unknown notification error",
+    };
+  }
+}
+
+export async function sendAccessChangeNotification(notification: AccessChangeNotification): Promise<NotificationResult> {
+  const { resendApiKey, alertFromEmail, alertToEmail } = getMessagingConfig();
+
+  const subjectMap = {
+    approved: "TinFields access approved",
+    revoked: "TinFields access revoked",
+    role_changed: "TinFields access role changed",
+  } as const;
+
+  const text = [
+    `Action: ${notification.action}`,
+    `Target: ${notification.targetDisplayName} <${notification.targetEmail}> (${notification.targetUserId})`,
+    `Actor: ${notification.actorDisplayName} <${notification.actorEmail}> (${notification.actorUserId})`,
+    notification.previousRole ? `Previous role: ${notification.previousRole}` : undefined,
+    notification.nextRole ? `Next role: ${notification.nextRole}` : undefined,
+  ]
+    .filter((line): line is string => typeof line === "string" && line.length > 0)
+    .join("\n");
+
+  if (!hasValue(resendApiKey) || !hasValue(alertFromEmail) || !hasValue(alertToEmail)) {
+    return {
+      provider: "fallback",
+      delivered: true,
+      usedFallback: true,
+      error: "Primary provider is not fully configured; fallback path used.",
+    };
+  }
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: alertFromEmail,
+        to: [alertToEmail],
+        subject: subjectMap[notification.action],
+        text,
       }),
     });
 

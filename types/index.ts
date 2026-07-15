@@ -148,3 +148,164 @@ export interface MessagingReadinessStatus {
   toConfigured: boolean;
   healthy: boolean;
 }
+
+export type FarmTopologyMode = "tier-as-zone" | "column-as-zone" | "custom";
+export type FarmNodeKind = "farm" | "system" | "column" | "tier" | "zone";
+export type CommandLifecycle = "queued" | "validated" | "blocked" | "sent" | "acked" | "failed" | "timed_out";
+export type AlertSeverity = "info" | "warning" | "critical";
+
+export interface Farm {
+  id: string;
+  name: string;
+  description?: string;
+  topologyMode: FarmTopologyMode;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FarmSystem {
+  id: string;
+  farmId: string;
+  name: string;
+  kind?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FarmColumn {
+  id: string;
+  systemId: string;
+  label: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FarmTier {
+  id: string;
+  columnId: string;
+  label: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FarmZone {
+  id: string;
+  farmId: string;
+  name: string;
+  zoneType: FarmTopologyMode;
+  memberIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Device {
+  id: string;
+  farmId: string;
+  zoneId?: string;
+  label: string;
+  model?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Sensor {
+  id: string;
+  deviceId: string;
+  sensorType: SensorType;
+  label?: string;
+  unit?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Actuator {
+  id: string;
+  deviceId: string;
+  label: string;
+  capability: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecipePhase {
+  id: string;
+  recipeId: string;
+  name: string;
+  order: number;
+  durationDays?: number;
+  setpoints: Record<string, number>;
+}
+
+export interface Recipe {
+  id: string;
+  name: string;
+  cropName?: string;
+  topologyMode: FarmTopologyMode;
+  createdAt: string;
+  updatedAt: string;
+  phases: RecipePhase[];
+}
+
+export interface ZoneAssignmentPlan {
+  id: string;
+  farmId: string;
+  zoneId: string;
+  recipeId?: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TelemetryPoint {
+  id: string;
+  zoneId: string;
+  sensorId?: string;
+  measuredAt: string;
+  values: Record<string, number>;
+}
+
+export interface AlertRule {
+  id: string;
+  farmId: string;
+  zoneId?: string;
+  metric: string;
+  threshold: number;
+  severity: AlertSeverity;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AlertEvent {
+  id: string;
+  ruleId: string;
+  farmId: string;
+  zoneId?: string;
+  severity: AlertSeverity;
+  message: string;
+  acknowledgedAt?: string;
+  createdAt: string;
+}
+
+export interface Command {
+  id: string;
+  farmId: string;
+  zoneId?: string;
+  actuatorId?: string;
+  source: "manual" | "autonomous";
+  lifecycle: CommandLifecycle;
+  action: string;
+  payload?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CommandExecution {
+  id: string;
+  commandId: string;
+  lifecycle: CommandLifecycle;
+  validationMessage?: string;
+  executedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
