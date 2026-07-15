@@ -8,6 +8,14 @@ export interface SensorData {
   timestamp: string;
 }
 
+export interface SensorHistoryPoint {
+  time: string;
+  temperature: number;
+  humidity: number;
+  soilMoisture: number;
+  ph: number;
+}
+
 export interface CropRecipe {
   id: string;
   cropName: string;

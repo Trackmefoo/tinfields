@@ -3,11 +3,12 @@
 import { IrrigationPanel } from "@/components/IrrigationPanel";
 import { LightControl } from "@/components/LightControl";
 import { SensorCard } from "@/components/SensorCard";
+import { SensorStreamChart } from "@/components/SensorStreamChart";
 import { useControl } from "@/hooks/useControl";
 import { useFarmData } from "@/hooks/useFarmData";
 
 export default function Home() {
-  const { isMqttConnected, sensors } = useFarmData();
+  const { isMqttConnected, sensorHistory, sensors } = useFarmData();
   const { startIrrigationZoneA, toggleLights, ventilationBoost } = useControl();
 
   return (
@@ -57,7 +58,7 @@ export default function Home() {
             <p className="mt-1 text-sm text-slate-600">
               The stream is now wired to MQTT with a simulation fallback.
             </p>
-            <div className="mt-6 h-52 rounded-2xl border border-dashed border-slate-300 bg-[linear-gradient(180deg,rgba(255,255,255,.8),rgba(221,242,232,.6))]" />
+            <SensorStreamChart data={sensorHistory} />
           </article>
 
           <article className="rounded-3xl border border-white/60 bg-white/75 p-6 shadow-[0_18px_40px_-26px_rgba(15,23,42,.5)] backdrop-blur-sm">
