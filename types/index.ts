@@ -198,6 +198,8 @@ export interface FarmZone {
   name: string;
   zoneType: FarmTopologyMode;
   memberIds: string[];
+  actuatorGroup?: string;
+  notes?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -242,12 +244,28 @@ export interface RecipePhase {
 
 export interface Recipe {
   id: string;
+  farmId: string;
   name: string;
   cropName?: string;
   topologyMode: FarmTopologyMode;
+  notes?: string;
+  createdByUserId: string;
   createdAt: string;
   updatedAt: string;
   phases: RecipePhase[];
+}
+
+export interface ZoneRecipeAssignment {
+  id: string;
+  farmId: string;
+  zoneId: string;
+  recipeId: string;
+  status: "active" | "completed" | "cancelled";
+  startedAt: string;
+  endedAt?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ZoneAssignmentPlan {

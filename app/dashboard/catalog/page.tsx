@@ -378,6 +378,12 @@ function CatalogDashboardContent() {
             </Link>
             <Link
               className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              href="/dashboard/recipes"
+            >
+              Recipes & Zones
+            </Link>
+            <Link
+              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
               href="/dashboard/yield"
             >
               Yield View
