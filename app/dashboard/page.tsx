@@ -135,6 +135,7 @@ export default function DashboardPage() {
   const canCreatePlanting = hasRequiredRole(role, "grow_manager");
   const canLogHarvest = hasRequiredRole(role, "operator");
   const canManageCatalog = hasRequiredRole(role, "grow_manager");
+  const canManageAccess = hasRequiredRole(role, "admin");
   const { startIrrigationZoneA, toggleLights, ventilationBoost } = useControl();
   const [plantingForm, setPlantingForm] = useState<PlantingFormState>(INITIAL_PLANTING_FORM);
   const [harvestForm, setHarvestForm] = useState<HarvestFormState>(INITIAL_HARVEST_FORM);
@@ -467,6 +468,14 @@ export default function DashboardPage() {
             </p>
           </div>
           <div className="flex items-center gap-3">
+            {canManageAccess ? (
+              <Link
+                className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700 hover:bg-slate-50"
+                href="/dashboard/admin/access"
+              >
+                Access Admin
+              </Link>
+            ) : null}
             <Link
               className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700 hover:bg-slate-50"
               href="/dashboard/catalog"
