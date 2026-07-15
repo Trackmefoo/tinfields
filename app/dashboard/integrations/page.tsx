@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import type { MessagingReadinessStatus } from "@/types";
+import type { MessagingReadinessStatus, StoredAuditEvent } from "@/types";
 
 type ReadinessResponse = {
   messaging: MessagingReadinessStatus;
@@ -18,6 +18,52 @@ type TestResponse = {
   readiness: MessagingReadinessStatus;
 };
 
+type AuditListResponse = {
+  items?: StoredAuditEvent[];
+};
+
+type IntegrationReadinessLogItem = {
+  id: string;
+  createdAt: string;
+  provider: "resend" | "fallback" | "unknown";
+  usedFallback: boolean;
+  delivered: boolean | null;
+  error?: string;
+};
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function extractReadinessLogItems(events: StoredAuditEvent[]) {
+  return events
+    .filter((event) => event.action === "integration-readiness-test")
+    .map<IntegrationReadinessLogItem>((event) => {
+      const details = toRecord(event.details);
+      const providerRaw = details?.provider;
+      const usedFallbackRaw = details?.usedFallback;
+      const deliveredRaw = details?.delivered;
+      const errorRaw = details?.error;
+
+      const provider =
+        providerRaw === "resend" || providerRaw === "fallback" ? providerRaw : "unknown";
+
+      return {
+        id: event.id,
+        createdAt: event.createdAt,
+        provider,
+        usedFallback: usedFallbackRaw === true,
+        delivered: typeof deliveredRaw === "boolean" ? deliveredRaw : null,
+        error: typeof errorRaw === "string" && errorRaw.trim() ? errorRaw : undefined,
+      };
+    })
+    .slice(0, 12);
+}
+
 function formatDateTime(iso: string) {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) {
@@ -32,6 +78,7 @@ export default function IntegrationsReadinessPage() {
   const [isTesting, setIsTesting] = useState(false);
   const [testMessage, setTestMessage] = useState("TinFields integration readiness test notification.");
   const [lastTest, setLastTest] = useState<TestResponse | null>(null);
+  const [readinessLog, setReadinessLog] = useState<IntegrationReadinessLogItem[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   async function loadReadiness() {
@@ -39,17 +86,32 @@ export default function IntegrationsReadinessPage() {
     setError(null);
 
     try {
-      const response = await fetch("/api/protected/integrations/readiness", {
-        cache: "no-store",
-      });
+      const [response, auditResponse] = await Promise.all([
+        fetch("/api/protected/integrations/readiness", {
+          cache: "no-store",
+        }),
+        fetch("/api/protected/audit?limit=120", {
+          cache: "no-store",
+        }),
+      ]);
 
       if (!response.ok) {
         const body: { error?: string } = await response.json().catch(() => ({}));
         throw new Error(body.error ?? "Unable to load readiness.");
       }
 
+      if (!auditResponse.ok) {
+        const body: { error?: string } = await auditResponse.json().catch(() => ({}));
+        throw new Error(body.error ?? "Unable to load readiness run log.");
+      }
+
       const payload: ReadinessResponse = await response.json();
+      const auditPayload: AuditListResponse = await auditResponse.json();
+
       setData(payload);
+      setReadinessLog(
+        extractReadinessLogItems(Array.isArray(auditPayload.items) ? auditPayload.items : []),
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load readiness.");
     } finally {
@@ -57,20 +119,51 @@ export default function IntegrationsReadinessPage() {
     }
   }
 
+  async function refreshReadinessLog() {
+    const auditResponse = await fetch("/api/protected/audit?limit=120", {
+      cache: "no-store",
+    });
+
+    if (!auditResponse.ok) {
+      const body: { error?: string } = await auditResponse.json().catch(() => ({}));
+      throw new Error(body.error ?? "Unable to load readiness run log.");
+    }
+
+    const auditPayload: AuditListResponse = await auditResponse.json();
+    setReadinessLog(
+      extractReadinessLogItems(Array.isArray(auditPayload.items) ? auditPayload.items : []),
+    );
+  }
+
   useEffect(() => {
     async function initialLoad() {
       try {
-        const response = await fetch("/api/protected/integrations/readiness", {
-          cache: "no-store",
-        });
+        const [response, auditResponse] = await Promise.all([
+          fetch("/api/protected/integrations/readiness", {
+            cache: "no-store",
+          }),
+          fetch("/api/protected/audit?limit=120", {
+            cache: "no-store",
+          }),
+        ]);
 
         if (!response.ok) {
           const body: { error?: string } = await response.json().catch(() => ({}));
           throw new Error(body.error ?? "Unable to load readiness.");
         }
 
+        if (!auditResponse.ok) {
+          const body: { error?: string } = await auditResponse.json().catch(() => ({}));
+          throw new Error(body.error ?? "Unable to load readiness run log.");
+        }
+
         const payload: ReadinessResponse = await response.json();
+        const auditPayload: AuditListResponse = await auditResponse.json();
+
         setData(payload);
+        setReadinessLog(
+          extractReadinessLogItems(Array.isArray(auditPayload.items) ? auditPayload.items : []),
+        );
       } catch (err) {
         setError(err instanceof Error ? err.message : "Unable to load readiness.");
       } finally {
@@ -103,6 +196,7 @@ export default function IntegrationsReadinessPage() {
 
       const payload: TestResponse = await response.json();
       setLastTest(payload);
+      await refreshReadinessLog();
       setData((current) =>
         current
           ? {
@@ -227,6 +321,42 @@ export default function IntegrationsReadinessPage() {
               </div>
             ) : null}
           </article>
+        </section>
+
+        <section className="rounded-3xl border border-white/60 bg-white/75 p-6 shadow-[0_18px_40px_-26px_rgba(15,23,42,.5)] backdrop-blur-sm">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">Recent Readiness Test Log</h2>
+            <span className="text-xs uppercase tracking-wide text-slate-500">
+              {isLoading ? "Loading..." : `${readinessLog.length} entries`}
+            </span>
+          </div>
+          <div className="mt-4 space-y-2">
+            {readinessLog.length === 0 ? (
+              <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                No readiness test attempts have been recorded yet.
+              </p>
+            ) : (
+              readinessLog.map((entry) => (
+                <div
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+                  key={entry.id}
+                >
+                  <p className="font-medium">
+                    {entry.delivered === null
+                      ? "Unknown delivery state"
+                      : entry.delivered
+                        ? "Delivered"
+                        : "Delivery failed"}
+                    {` via ${entry.provider}`}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    {entry.usedFallback ? "Fallback used" : "Primary path used"} | {formatDateTime(entry.createdAt)}
+                  </p>
+                  {entry.error ? <p className="text-xs text-amber-700">Error: {entry.error}</p> : null}
+                </div>
+              ))
+            )}
+          </div>
         </section>
       </main>
     </div>
