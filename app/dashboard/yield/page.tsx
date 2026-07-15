@@ -26,6 +26,19 @@ type CropComparisonRow = {
   previousRejectRate: number;
 };
 
+type ProfileComparisonRow = {
+  profileKey: string;
+  cropName: string;
+  cultivar?: string;
+  zoneId: string;
+  currentUsable: number;
+  previousUsable: number;
+  usableDelta: number;
+  currentRejectRate: number;
+  previousRejectRate: number;
+  rejectRateDelta: number;
+};
+
 export default function YieldDashboardPage() {
   const [windowDays, setWindowDays] = useState(120);
   const [currentData, setCurrentData] = useState<YieldKpiResponse | null>(null);
@@ -225,6 +238,110 @@ export default function YieldDashboardPage() {
     return rows;
   }, [currentData, previousData]);
 
+  const profileComparisonRows = useMemo(() => {
+    if (!currentData || !previousData) {
+      return [];
+    }
+
+    const byProfile = new Map<
+      string,
+      {
+        cropName: string;
+        cultivar?: string;
+        zoneId: string;
+        currentUsable: number;
+        currentReject: number;
+        currentTotal: number;
+        previousUsable: number;
+        previousReject: number;
+        previousTotal: number;
+      }
+    >();
+
+    for (const item of currentData.items) {
+      const key = `${item.cropName}::${item.cultivar ?? ""}::${item.zoneId}`;
+      const entry =
+        byProfile.get(key) ??
+        {
+          cropName: item.cropName,
+          cultivar: item.cultivar,
+          zoneId: item.zoneId,
+          currentUsable: 0,
+          currentReject: 0,
+          currentTotal: 0,
+          previousUsable: 0,
+          previousReject: 0,
+          previousTotal: 0,
+        };
+
+      entry.currentUsable += item.usableWeightKg;
+      entry.currentReject += item.rejectWeightKg;
+      entry.currentTotal += item.usableWeightKg + item.rejectWeightKg;
+      byProfile.set(key, entry);
+    }
+
+    for (const item of previousData.items) {
+      const key = `${item.cropName}::${item.cultivar ?? ""}::${item.zoneId}`;
+      const entry =
+        byProfile.get(key) ??
+        {
+          cropName: item.cropName,
+          cultivar: item.cultivar,
+          zoneId: item.zoneId,
+          currentUsable: 0,
+          currentReject: 0,
+          currentTotal: 0,
+          previousUsable: 0,
+          previousReject: 0,
+          previousTotal: 0,
+        };
+
+      entry.previousUsable += item.usableWeightKg;
+      entry.previousReject += item.rejectWeightKg;
+      entry.previousTotal += item.usableWeightKg + item.rejectWeightKg;
+      byProfile.set(key, entry);
+    }
+
+    const rows: ProfileComparisonRow[] = Array.from(byProfile.entries()).map(
+      ([profileKey, value]) => {
+        const currentRejectRate =
+          value.currentTotal > 0
+            ? (value.currentReject / value.currentTotal) * 100
+            : 0;
+        const previousRejectRate =
+          value.previousTotal > 0
+            ? (value.previousReject / value.previousTotal) * 100
+            : 0;
+
+        return {
+          profileKey,
+          cropName: value.cropName,
+          cultivar: value.cultivar,
+          zoneId: value.zoneId,
+          currentUsable: value.currentUsable,
+          previousUsable: value.previousUsable,
+          usableDelta: value.currentUsable - value.previousUsable,
+          currentRejectRate,
+          previousRejectRate,
+          rejectRateDelta: currentRejectRate - previousRejectRate,
+        };
+      },
+    );
+
+    rows.sort((a, b) => b.usableDelta - a.usableDelta);
+    return rows;
+  }, [currentData, previousData]);
+
+  const topImprovers = useMemo(
+    () => profileComparisonRows.filter((row) => row.usableDelta > 0).slice(0, 5),
+    [profileComparisonRows],
+  );
+
+  const topRegressions = useMemo(
+    () => profileComparisonRows.filter((row) => row.usableDelta < 0).slice(-5).reverse(),
+    [profileComparisonRows],
+  );
+
   return (
     <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_15%_12%,#e8f9da_0%,#f5fde7_28%,#eef7ff_60%,#f8f1e6_100%)] text-slate-900">
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(16,185,129,.08),rgba(14,116,144,.08),rgba(245,158,11,.08))]" />
@@ -336,6 +453,122 @@ export default function YieldDashboardPage() {
                   <tr>
                     <td className="px-3 py-4 text-sm text-slate-600" colSpan={6}>
                       No crop-level comparison data yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-white/60 bg-white/75 p-6 shadow-[0_18px_40px_-26px_rgba(15,23,42,.5)] backdrop-blur-sm">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">Profile Leaders and Regressions</h2>
+            <p className="text-xs uppercase tracking-wide text-slate-500">
+              {isLoading
+                ? "Refreshing..."
+                : `${topImprovers.length} improvers · ${topRegressions.length} regressions`}
+            </p>
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <article className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-700">
+                Top Improvers
+              </h3>
+              <div className="mt-3 space-y-2">
+                {topImprovers.length ? (
+                  topImprovers.map((row) => (
+                    <div className="rounded-xl bg-white/80 px-3 py-2 text-sm" key={row.profileKey}>
+                      <p className="font-semibold text-slate-800">
+                        {row.cropName}
+                        {row.cultivar ? ` / ${row.cultivar}` : ""}
+                        {` · ${row.zoneId}`}
+                      </p>
+                      <p className="text-xs text-slate-600">
+                        Yield delta: {formatDelta(row.currentUsable, row.previousUsable, " kg")}
+                        {" · Reject delta: "}
+                        {formatDelta(row.currentRejectRate, row.previousRejectRate, "%")}
+                      </p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-sm text-slate-600">No improving profiles in this window.</p>
+                )}
+              </div>
+            </article>
+
+            <article className="rounded-2xl border border-rose-100 bg-rose-50/60 p-4">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-rose-700">
+                Top Regressions
+              </h3>
+              <div className="mt-3 space-y-2">
+                {topRegressions.length ? (
+                  topRegressions.map((row) => (
+                    <div className="rounded-xl bg-white/80 px-3 py-2 text-sm" key={row.profileKey}>
+                      <p className="font-semibold text-slate-800">
+                        {row.cropName}
+                        {row.cultivar ? ` / ${row.cultivar}` : ""}
+                        {` · ${row.zoneId}`}
+                      </p>
+                      <p className="text-xs text-slate-600">
+                        Yield delta: {formatDelta(row.currentUsable, row.previousUsable, " kg")}
+                        {" · Reject delta: "}
+                        {formatDelta(row.currentRejectRate, row.previousRejectRate, "%")}
+                      </p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-sm text-slate-600">No regressing profiles in this window.</p>
+                )}
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-white/60 bg-white/75 p-6 shadow-[0_18px_40px_-26px_rgba(15,23,42,.5)] backdrop-blur-sm">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">Profile Comparison</h2>
+            <p className="text-xs uppercase tracking-wide text-slate-500">
+              {isLoading ? "Refreshing..." : `${profileComparisonRows.length} profiles`}
+            </p>
+          </div>
+
+          <div className="mt-4 overflow-x-auto">
+            <table className="min-w-full border-separate border-spacing-y-2">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
+                  <th className="px-3 py-2">Profile</th>
+                  <th className="px-3 py-2">Current (kg)</th>
+                  <th className="px-3 py-2">Previous (kg)</th>
+                  <th className="px-3 py-2">Delta (kg)</th>
+                  <th className="px-3 py-2">Reject Delta</th>
+                </tr>
+              </thead>
+              <tbody>
+                {profileComparisonRows.length ? (
+                  profileComparisonRows.map((row) => (
+                    <tr className="rounded-xl bg-white text-sm text-slate-700" key={row.profileKey}>
+                      <td className="rounded-l-xl px-3 py-2">
+                        <p className="font-semibold">
+                          {row.cropName}
+                          {row.cultivar ? ` / ${row.cultivar}` : ""}
+                        </p>
+                        <p className="text-xs text-slate-500">{row.zoneId}</p>
+                      </td>
+                      <td className="px-3 py-2">{row.currentUsable.toFixed(2)}</td>
+                      <td className="px-3 py-2">{row.previousUsable.toFixed(2)}</td>
+                      <td className="px-3 py-2">{row.usableDelta.toFixed(2)}</td>
+                      <td className="rounded-r-xl px-3 py-2">
+                        {row.rejectRateDelta > 0 ? "+" : ""}
+                        {row.rejectRateDelta.toFixed(2)}%
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td className="px-3 py-4 text-sm text-slate-600" colSpan={5}>
+                      No profile-level comparison data yet.
                     </td>
                   </tr>
                 )}
