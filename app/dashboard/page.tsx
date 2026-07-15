@@ -490,6 +490,12 @@ export default function DashboardPage() {
             </Link>
             <Link
               className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700 hover:bg-slate-50"
+              href="/dashboard/autonomy"
+            >
+              Autonomy
+            </Link>
+            <Link
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700 hover:bg-slate-50"
               href="/dashboard/integrations"
             >
               Integrations

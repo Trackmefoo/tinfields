@@ -79,6 +79,19 @@ enum ZoneRecipeAssignmentStatus {
   cancelled
 }
 
+enum AutonomyRiskLevel {
+  low
+  high
+}
+
+enum AutonomyRecommendationStatus {
+  proposed
+  approved
+  rejected
+  executed
+  blocked
+}
+
 model AuditEvent {
   id         String         @id
   actorUserId String
@@ -295,6 +308,39 @@ model ZoneRecipeAssignment {
   @@index([recipeId])
   @@index([status])
   @@index([startedAt])
+}
+
+model AutonomyRecommendation {
+  id                  String                       @id
+  farmId              String
+  zoneId              String
+  recipeId            String
+  recipePhaseId       String?
+  metric              String
+  currentValue        Float
+  targetValue         Float
+  deviation           Float
+  riskLevel           AutonomyRiskLevel
+  status              AutonomyRecommendationStatus @default(proposed)
+  title               String
+  rationale           String
+  recommendedAction   String
+  command             String
+  payload             Json?
+  requiresApproval    Boolean                      @default(false)
+  commandId           String?
+  blockedReason       String?
+  decidedByUserId     String?
+  decidedAt           DateTime?
+  executedAt          DateTime?
+  createdAt           DateTime
+  updatedAt           DateTime
+
+  @@index([farmId])
+  @@index([zoneId])
+  @@index([status])
+  @@index([riskLevel])
+  @@index([createdAt])
 }
 
 model PlantingBatch {
